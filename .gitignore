@@ -1,0 +1,34 @@
+# Node / Nuxt
+node_modules/
+.nuxt/
+.output/
+dist/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+
+# Python (scripts de génération)
+__pycache__/
+*.pyc
+venv/
+.env/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Editor
+.vscode/
+.idea/
+
+# Temporary
+tmp/
