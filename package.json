@@ -16,7 +16,6 @@
     "vue-router": "^4.3.0"
   },
   "dependencies": {
-    "@nuxtjs/google-gtag": "^1.0.4",
     "fuse.js": "^7.0.0"
   }
 }
