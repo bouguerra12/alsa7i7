@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "prebuild": "node scripts/generate-sitemap.mjs",
+    "pregenerate": "node scripts/generate-sitemap.mjs",
     "build": "nuxt build",
     "dev": "nuxt dev",
     "generate": "nuxt generate",
