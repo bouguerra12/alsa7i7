@@ -25,7 +25,7 @@ const books = [
 
      
         <span class="block text-lg md:text-xl font-normal text-slate-600 mt-2">
-          تهتم بنشر الأحاديث النبوية الصحيحة من كتب السنة الموثوقة
+          يهتم بنشر الأحاديث النبوية الصحيحة من كتب السنة الموثوقة
         </span>
       
 

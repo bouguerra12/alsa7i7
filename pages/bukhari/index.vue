@@ -14,6 +14,63 @@ const isDetailsLoading = ref(false)
 const showModal = ref(false)
 const isDark = ref(false)
 
+// ✅ MENU الكتب (MOBILE DRAWER) + SWIPE
+const showBooksMenu = ref(false)
+const drawerEl = ref(null)
+const drawerTranslateX = ref(0)
+const drawerWidth = ref(360)
+const isSwipingDrawer = ref(false)
+const drawerStartX = ref(0)
+const drawerCurrentX = ref(0)
+
+const openBooksMenu = async () => {
+  showBooksMenu.value = true
+  drawerTranslateX.value = 0
+  await nextTick()
+  if (drawerEl.value) {
+    drawerWidth.value = drawerEl.value.getBoundingClientRect().width || 360
+  }
+}
+
+const closeBooksMenu = () => {
+  showBooksMenu.value = false
+  drawerTranslateX.value = 0
+  isSwipingDrawer.value = false
+}
+
+const onDrawerTouchStart = (e) => {
+  if (!e.touches?.length) return
+  isSwipingDrawer.value = true
+  drawerStartX.value = e.touches[0].clientX
+  drawerCurrentX.value = drawerStartX.value
+}
+
+const onDrawerTouchMove = (e) => {
+  if (!isSwipingDrawer.value || !e.touches?.length) return
+  drawerCurrentX.value = e.touches[0].clientX
+  const delta = drawerCurrentX.value - drawerStartX.value // >0 vers la droite
+  drawerTranslateX.value = Math.max(0, Math.min(delta, drawerWidth.value))
+}
+
+const onDrawerTouchEnd = () => {
+  if (!isSwipingDrawer.value) return
+  const delta = drawerCurrentX.value - drawerStartX.value
+  const threshold = drawerWidth.value * 0.25
+  if (delta > threshold) {
+    closeBooksMenu()
+  } else {
+    drawerTranslateX.value = 0
+  }
+  isSwipingDrawer.value = false
+}
+
+// ✅ Bloquer le scroll derrière (quand drawer ouvert)
+watch(showBooksMenu, (v) => {
+  if (process.client) {
+    document.body.style.overflow = v ? 'hidden' : ''
+  }
+})
+
 // ✅ SCROLL TOP (AJOUT)
 const showScrollTop = ref(false)
 
@@ -80,6 +137,7 @@ onMounted(async () => {
 // ✅ AJOUT: nettoyer l'écouteur
 onUnmounted(() => {
   window.removeEventListener('scroll', handleScroll)
+  if (process.client) document.body.style.overflow = ''
 })
 
 // --- DÉTAIL ---
@@ -212,14 +270,86 @@ watch([searchQuery, selectedCategory], () => {
             <h1 class="font-serif text-2xl font-bold tracking-wide text-slate-800 dark:text-white">صحيح البخاري</h1>
           </div>
         </div>
-        <button
-          @click="toggleTheme"
-          class="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-yellow-400 flex items-center justify-center hover:scale-110 transition border border-slate-200 dark:border-slate-700"
-        >
-          <span v-if="isDark">☀️</span><span v-else>🌙</span>
-        </button>
+
+        <!-- ✅ AJOUT: bouton الكتب (mobile) + theme (inchangé) -->
+        <div class="flex items-center gap-2">
+          <button
+            @click="openBooksMenu"
+            class="lg:hidden w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-200 flex items-center justify-center hover:scale-110 transition border border-slate-200 dark:border-slate-700"
+            aria-label="الكتب والأبواب"
+          >
+            📚
+          </button>
+
+          <button
+            @click="toggleTheme"
+            class="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-yellow-400 flex items-center justify-center hover:scale-110 transition border border-slate-200 dark:border-slate-700"
+          >
+            <span v-if="isDark">☀️</span><span v-else>🌙</span>
+          </button>
+        </div>
       </div>
     </header>
+
+    <!-- ✅ AJOUT: MOBILE DRAWER + SWIPE -->
+    <div v-if="showBooksMenu" class="lg:hidden fixed inset-0 z-[90]">
+      <div class="absolute inset-0 bg-slate-900/60" @click="closeBooksMenu"></div>
+
+      <div
+        ref="drawerEl"
+        class="absolute top-0 right-0 h-full w-[85%] max-w-[360px] bg-white dark:bg-[#131c31] shadow-2xl border-l border-slate-200 dark:border-slate-800 transition-transform duration-200 ease-out"
+        :style="{ transform: `translateX(${drawerTranslateX}px)` }"
+        @touchstart.passive="onDrawerTouchStart"
+        @touchmove.passive="onDrawerTouchMove"
+        @touchend="onDrawerTouchEnd"
+        @touchcancel="onDrawerTouchEnd"
+      >
+        <div
+          class="h-16 px-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-[#131c31] sticky top-0 z-10"
+        >
+          <div class="font-bold text-slate-600 dark:text-slate-200">الكتب والأبواب</div>
+          <button
+            class="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 text-slate-400"
+            @click="closeBooksMenu"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div class="p-2 space-y-1 overflow-y-auto h-[calc(100%-4rem)] custom-scrollbar">
+          <button
+            @click="(selectedCategory = ''), (searchQuery = ''), closeBooksMenu()"
+            class="w-full text-right px-3 py-2.5 rounded-lg text-sm transition font-bold"
+            :class="
+              !selectedCategory && !searchQuery
+                ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+            "
+          >
+            📚 جميع الأحاديث
+          </button>
+
+          <button
+            v-for="cat in categories"
+            :key="cat"
+            @click="(selectedCategory = cat), (searchQuery = ''), closeBooksMenu()"
+            class="w-full text-right px-3 py-2.5 rounded-lg text-sm transition flex justify-between items-center group"
+            :class="
+              selectedCategory === cat
+                ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 font-bold'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+            "
+          >
+            <span class="truncate">{{ cat }}</span>
+            <span
+              class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500"
+            >
+              {{ hadiths.filter((h) => h.c === cat).length }}
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
 
     <main class="container mx-auto px-4 pt-24 pb-20 max-w-7xl">
       <div v-if="loading" class="flex flex-col items-center justify-center h-[60vh] animate-pulse">
