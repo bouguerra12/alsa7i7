@@ -1,5 +1,6 @@
 <script setup>
 import Fuse from 'fuse.js'
+import { toPng } from 'html-to-image'
 
 // --- ETAT ---
 const hadiths = ref([])
@@ -182,7 +183,7 @@ const renderHadith = (text) => {
         ${formattedSanad}
       </div>
       <div class="matn-box relative">
-        <p class="text-2xl md:text-3xl font-serif leading-[2.8] text-slate-900 dark:text-white font-bold text-justify">
+        <p class="text-2xl md:text-3xl font-serif leading-[2.4] md:leading-[2.8] lg:leading-[3.0]  text-slate-900 dark:text-white font-bold text-justify">
           ${matn}
         </p>
       </div>
@@ -191,7 +192,7 @@ const renderHadith = (text) => {
 
   return `
     <div class="matn-box relative">
-      <p class="text-2xl md:text-3xl font-serif leading-[2.8] text-slate-900 dark:text-white font-bold text-justify">
+      <p class="text-2xl md:text-3xl font-serif leading-[2.4] md:leading-[2.8] lg:leading-[3.0]  text-slate-900 dark:text-white font-bold text-justify">
         ${text}
       </p>
     </div>
@@ -244,6 +245,140 @@ watch([searchQuery, selectedCategory], () => {
   page.value = 1
   scrollToTop()
 })
+
+//✅ AJOUT: ====== SHARE CARD (IMAGE EXPORT) ======
+const shareCardRef = ref(null)
+const shareBusy = ref(false)
+
+// ton background fixe (logo + youtube déjà dedans)
+const SHARE_BG_URL = '/share/bg1080x1920.png' // public/share/bg1080x1920.png
+
+const getHadithShareUrl = (id) => `https://alsa7i7.com/bukhari/${id}`
+
+// même regex que ton renderHadith (cohérence)
+const splitHadithText = (text) => {
+  if (!text) return { sanad: '', matn: '' }
+
+  const regex =
+    /((?:صَلَّى.*?وَسَلَّمَ|صلى الله عليه وسلم)(?:\s+(?:يَقُولُ|قَالَ|يُحَدِّثُ|خَطَبَ|يقول|قال|يحدث))?)/
+
+  const match = text.match(regex)
+
+  if (match && match.index > 0) {
+    const splitIdx = match.index + match[0].length
+    return {
+      sanad: text.substring(0, splitIdx).trim(),
+      matn: text.substring(splitIdx).trim()
+    }
+  }
+
+  return { sanad: '', matn: text.trim() }
+}
+
+const getShareLayout = (text) => {
+  const { sanad, matn } = splitHadithText(text)
+
+  const len = (matn || '').length
+  const sanadLen = (sanad || '').length
+
+  // padding horizontal global
+  let padX = 90
+
+  // tailles sanad
+  let sanadSize = 28
+  let sanadLH = 1.7
+
+  // ✅ tailles matn (AGRANDI)
+  let matnSize = 52
+  let matnLH = 2.0
+
+  // padding box matn
+  let boxPadX = 44
+  let boxPadY = 36
+
+  // align vertical dans la safe-zone
+  // (si texte très long → on démarre en haut au lieu de centrer)
+  let vAlign = 'center'
+
+  if (len > 650) {
+    padX = 78
+    sanadSize = 22
+    matnSize = 38
+    matnLH = 1.75
+    boxPadX = 34
+    boxPadY = 28
+    vAlign = 'flex-start'
+  } else if (len > 420) {
+    padX = 84
+    sanadSize = 24
+    matnSize = 42
+    matnLH = 1.85
+    boxPadX = 38
+    boxPadY = 30
+    vAlign = 'center'
+  } else if (len < 220) {
+    padX = 96
+    sanadSize = 28
+    matnSize = 60
+    matnLH = 2.1
+    boxPadX = 46
+    boxPadY = 38
+    vAlign = 'center'
+  }
+
+  // si sanad énorme, on réduit un peu
+  if (sanadLen > 260) {
+    sanadSize = Math.max(20, sanadSize - 3)
+  }
+
+  return {
+    sanad,
+    matn,
+    padX,
+    sanadSize,
+    sanadLH,
+    matnSize,
+    matnLH,
+    boxPadX,
+    boxPadY,
+    vAlign
+  }
+}
+
+const ensureFontsReady = async () => {
+  if (process.client && document?.fonts?.ready) {
+    await document.fonts.ready
+  }
+}
+
+const exportHadithImage = async () => {
+  if (!selectedHadith.value || !shareCardRef.value) return
+
+  try {
+    shareBusy.value = true
+    await nextTick()
+    await ensureFontsReady()
+
+    const dataUrl = await toPng(shareCardRef.value, {
+      width: 1080,
+      height: 1920,
+      pixelRatio: 2, // جودة عالية
+      cacheBust: true
+    })
+
+    const a = document.createElement('a')
+    a.href = dataUrl
+    a.download = `hadith_${selectedHadith.value.id}.png`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } catch (e) {
+    console.error(e)
+    alert('Erreur export image')
+  } finally {
+    shareBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -503,7 +638,7 @@ watch([searchQuery, selectedCategory], () => {
           class="relative bg-white dark:bg-[#0f172a] w-full max-w-4xl max-h-[90vh] rounded-[2rem] shadow-2xl flex flex-col overflow-hidden animate-slide-up border border-slate-200 dark:border-slate-800"
         >
           <div class="px-8 py-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-[#0f172a] sticky top-0 z-10">
-            <!-- ✅ SEULE MODIF ICI : restaurer le lien au milieu -->
+            <!-- ✅ SEULE MODIF ICI : + bouton 📷 بعد 🔗 -->
             <div class="flex items-center gap-3">
               <h3 class="text-xl font-bold text-slate-800 dark:text-white">
                 حديث رقم {{ selectedHadith?.id || '...' }}
@@ -516,6 +651,17 @@ watch([searchQuery, selectedCategory], () => {
               >
                 🔗 صفحة مستقلة
               </NuxtLink>
+
+              <!-- ✅ AJOUT: bouton export image -->
+              <button
+                v-if="selectedHadith"
+                @click="exportHadithImage"
+                :disabled="shareBusy"
+                class="text-xs bg-emerald-50 dark:bg-emerald-900/20 px-3 py-1 rounded-full text-emerald-700 dark:text-emerald-400 hover:opacity-80 transition disabled:opacity-50"
+                title="التقاط صورة للحديث"
+              >
+                📷 التقاط صورة
+              </button>
             </div>
 
             <button
@@ -570,6 +716,94 @@ watch([searchQuery, selectedCategory], () => {
           </div>
         </div>
       </div>
+
+      <!-- ✅ AJOUT: OFFSCREEN SHARE CARD (ne casse pas le layout) -->
+<div class="fixed -left-[99999px] top-0 opacity-0 pointer-events-none">
+  <div
+    ref="shareCardRef"
+    class="relative overflow-hidden"
+    :style="{
+      width: '1080px',
+      height: '1920px',
+      backgroundImage: `url(${SHARE_BG_URL})`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      direction: 'rtl'
+    }"
+  >
+    <template v-if="selectedHadith">
+      <template v-for="(v, k) in [getShareLayout(selectedHadith.text_chakl)]" :key="k">
+        <!-- ✅ SAFE AREA: zone centrale (entre décor haut/bas) -->
+        <div
+          class="absolute left-0 right-0"
+          :style="{
+            top: '360px',
+            bottom: '300px',
+            padding: `0 ${v.padX}px`,
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: v.vAlign
+          }"
+        >
+          <!-- ✅ SANAD : même police que ton site (Noto Kufi Arabic) -->
+          <div
+            v-if="v.sanad"
+            class="text-justify"
+            :style="{
+              fontFamily: `'Noto Kufi Arabic','Tahoma','Arial',sans-serif`,
+              fontSize: v.sanadSize + 'px',
+              lineHeight: v.sanadLH,
+              color: 'rgba(0,0,0,.60)',
+              fontWeight: 600
+            }"
+          >
+            {{ v.sanad }}
+          </div>
+
+          <!-- MATN (sans box) -->
+          <div
+            class="mt-8 text-justify"
+            :style="{
+              fontFamily: `'Amiri','Noto Naskh Arabic','Tahoma','Arial',sans-serif`,
+              fontSize: v.matnSize + 'px',
+              lineHeight: v.matnLH,
+              color: '#000',
+              fontWeight: 800,
+              textShadow: '0 2px 10px rgba(255,255,255,.65)' // lisibilité sur fond
+            }"
+          >
+            {{ v.matn }}
+          </div>
+
+          <!-- footer -->
+          <div class="mt-10 flex items-center justify-between">
+            <div
+              :style="{
+                fontFamily: `'Noto Kufi Arabic','Tahoma','Arial',sans-serif`,
+                fontSize: '28px',
+                color: 'rgba(0,0,0,.60)'
+              }"
+            >
+              صحيح البخاري — حديث رقم {{ selectedHadith.id }}
+            </div>
+
+            <div
+              :style="{
+                direction: 'ltr',
+                fontFamily: `Tahoma, Arial, sans-serif`,
+                fontSize: '26px',
+                color: 'rgba(0,0,0,.60)'
+              }"
+            >
+              {{ getHadithShareUrl(selectedHadith.id) }}
+            </div>
+          </div>
+        </div>
+      </template>
+    </template>
+  </div>
+</div>
+<!-- ✅ نهاية إضافة -->
     </main>
   </div>
 </template>
