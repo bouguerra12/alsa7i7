@@ -263,11 +263,12 @@ const isIOS = () => {
 }
 
 const preloadImage = (src) =>
-  new Promise((resolve, reject) => {
+  new Promise((resolve) => {
     const img = new Image()
     img.onload = () => resolve(true)
-    img.onerror = reject
+    img.onerror = () => resolve(false)
     img.src = src
+    if (img.complete) resolve(true)
   })
 
 // même regex que ton renderHadith (cohérence)
@@ -373,7 +374,7 @@ const exportHadithImage = async () => {
     shareBusy.value = true
 
     // ✅ important iOS: s'assurer que le BG est chargé + fonts prêtes
-    await preloadImage(SHARE_BG_URL).catch(() => {})
+    await preloadImage(SHARE_BG_URL)
     await nextTick()
     await ensureFontsReady()
     await nextTick()
@@ -390,7 +391,6 @@ const exportHadithImage = async () => {
       const blob = await (await fetch(dataUrl)).blob()
       const file = new File([blob], `hadith_${selectedHadith.value.id}.png`, { type: 'image/png' })
 
-      // si iOS accepte le fichier via share → parfait
       if (!navigator.canShare || navigator.canShare({ files: [file] })) {
         await navigator.share({
           files: [file],
@@ -399,7 +399,7 @@ const exportHadithImage = async () => {
         return
       }
 
-      // fallback iOS: ouvrir l'image dans un nouvel onglet (au moins visible)
+      // fallback iOS
       window.open(dataUrl, '_blank')
       return
     }
@@ -637,7 +637,7 @@ const exportHadithImage = async () => {
             <button
               @click="prevPage"
               :disabled="page === 1"
-              class="w-12 h-12 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm flex items-center justify-center hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-30 transition dark:text-white"
+              class="w-12 h-12 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm flex items ditems-center justify-center hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-30 transition dark:text-white"
             >
               <span>→</span>
             </button>
@@ -757,97 +757,105 @@ const exportHadithImage = async () => {
       </div>
 
       <!-- ✅ AJOUT: OFFSCREEN SHARE CARD (ne casse pas le layout) -->
-<div
-  class="fixed opacity-0 pointer-events-none"
-  :style="isIOS()
-    ? { left: '0px', top: '0px', zIndex: -10 }
-    : { left: '-99999px', top: '0px' }"
->
-  <div
-    ref="shareCardRef"
-    class="relative overflow-hidden"
-    :style="{
-      width: '1080px',
-      height: '1920px',
-      backgroundImage: `url(${SHARE_BG_URL})`,
-      backgroundSize: 'cover',
-      backgroundPosition: 'center',
-      direction: 'rtl'
-    }"
-  >
-    <template v-if="selectedHadith">
-      <template v-for="(v, k) in [getShareLayout(selectedHadith.text_chakl)]" :key="k">
-        <!-- ✅ SAFE AREA: zone centrale (entre décor haut/bas) -->
+      <div
+        class="fixed opacity-0 pointer-events-none"
+        :style="isIOS()
+          ? { left: '0px', top: '0px', zIndex: -10 }
+          : { left: '-99999px', top: '0px' }"
+      >
         <div
-          class="absolute left-0 right-0"
+          ref="shareCardRef"
+          class="relative overflow-hidden"
           :style="{
-            top: '360px',
-            bottom: '300px',
-            padding: `0 ${v.padX}px`,
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: v.vAlign
+            width: '1080px',
+            height: '1920px',
+            direction: 'rtl'
           }"
         >
-          <!-- ✅ SANAD : même police que ton site (Noto Kufi Arabic) -->
-          <div
-            v-if="v.sanad"
-            class="text-justify"
-            :style="{
-              fontFamily: `'Noto Kufi Arabic','Tahoma','Arial',sans-serif`,
-              fontSize: v.sanadSize + 'px',
-              lineHeight: v.sanadLH,
-              color: 'rgba(0,0,0,.60)',
-              fontWeight: 600
-            }"
-          >
-            {{ v.sanad }}
-          </div>
+          <!-- ✅ BG réel (fix iOS Safari: background-image souvent ignoré) -->
+          <img
+            :src="SHARE_BG_URL"
+            class="absolute inset-0 w-full h-full object-cover"
+            alt=""
+            draggable="false"
+          />
 
-          <!-- MATN (sans box) -->
-          <div
-            class="mt-8 text-justify"
-            :style="{
-              fontFamily: `'Amiri','Noto Naskh Arabic','Tahoma','Arial',sans-serif`,
-              fontSize: v.matnSize + 'px',
-              lineHeight: v.matnLH,
-              color: '#000',
-              fontWeight: 800,
-              textShadow: '0 2px 10px rgba(255,255,255,.65)' // lisibilité sur fond
-            }"
-          >
-            {{ v.matn }}
-          </div>
+          <!-- ✅ contenu au-dessus -->
+          <div class="relative z-[1] w-full h-full">
+            <template v-if="selectedHadith">
+              <template v-for="(v, k) in [getShareLayout(selectedHadith.text_chakl)]" :key="k">
+                <!-- ✅ SAFE AREA: zone centrale (entre décor haut/bas) -->
+                <div
+                  class="absolute left-0 right-0"
+                  :style="{
+                    top: '360px',
+                    bottom: '300px',
+                    padding: `0 ${v.padX}px`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: v.vAlign
+                  }"
+                >
+                  <!-- ✅ SANAD : même police que ton site (Noto Kufi Arabic) -->
+                  <div
+                    v-if="v.sanad"
+                    class="text-justify"
+                    :style="{
+                      fontFamily: `'Noto Kufi Arabic','Tahoma','Arial',sans-serif`,
+                      fontSize: v.sanadSize + 'px',
+                      lineHeight: v.sanadLH,
+                      color: 'rgba(0,0,0,.60)',
+                      fontWeight: 600
+                    }"
+                  >
+                    {{ v.sanad }}
+                  </div>
 
-          <!-- footer -->
-          <div class="mt-10 flex items-center justify-between">
-            <div
-              :style="{
-                fontFamily: `'Noto Kufi Arabic','Tahoma','Arial',sans-serif`,
-                fontSize: '28px',
-                color: 'rgba(0,0,0,.60)'
-              }"
-            >
-              صحيح البخاري — حديث رقم {{ selectedHadith.id }}
-            </div>
+                  <!-- MATN (sans box) -->
+                  <div
+                    class="mt-8 text-justify"
+                    :style="{
+                      fontFamily: `'Amiri','Noto Naskh Arabic','Tahoma','Arial',sans-serif`,
+                      fontSize: v.matnSize + 'px',
+                      lineHeight: v.matnLH,
+                      color: '#000',
+                      fontWeight: 800,
+                      textShadow: '0 2px 10px rgba(255,255,255,.65)'
+                    }"
+                  >
+                    {{ v.matn }}
+                  </div>
 
-            <div
-              :style="{
-                direction: 'ltr',
-                fontFamily: `Tahoma, Arial, sans-serif`,
-                fontSize: '26px',
-                color: 'rgba(0,0,0,.60)'
-              }"
-            >
-              {{ getHadithShareUrl(selectedHadith.id) }}
-            </div>
+                  <!-- footer -->
+                  <div class="mt-10 flex items-center justify-between">
+                    <div
+                      :style="{
+                        fontFamily: `'Noto Kufi Arabic','Tahoma','Arial',sans-serif`,
+                        fontSize: '28px',
+                        color: 'rgba(0,0,0,.60)'
+                      }"
+                    >
+                      صحيح البخاري — حديث رقم {{ selectedHadith.id }}
+                    </div>
+
+                    <div
+                      :style="{
+                        direction: 'ltr',
+                        fontFamily: `Tahoma, Arial, sans-serif`,
+                        fontSize: '26px',
+                        color: 'rgba(0,0,0,.60)'
+                      }"
+                    >
+                      {{ getHadithShareUrl(selectedHadith.id) }}
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </template>
           </div>
         </div>
-      </template>
-    </template>
-  </div>
-</div>
-<!-- ✅ نهاية إضافة -->
+      </div>
+      <!-- ✅ نهاية إضافة -->
     </main>
   </div>
 </template>
@@ -878,4 +886,3 @@ const exportHadithImage = async () => {
   box-shadow: none;
 }
 </style>
-
