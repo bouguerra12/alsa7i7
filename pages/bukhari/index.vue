@@ -255,6 +255,21 @@ const SHARE_BG_URL = '/share/bg1080x1920.png' // public/share/bg1080x1920.png
 
 const getHadithShareUrl = (id) => `https://alsa7i7.com/bukhari/${id}`
 
+// ✅ iOS helpers (pour éviter le bug iPhone + permettre "Enregistrer dans Photos")
+const isIOS = () => {
+  if (!process.client) return false
+  const ua = navigator.userAgent || ''
+  return /iPad|iPhone|iPod/.test(ua)
+}
+
+const preloadImage = (src) =>
+  new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(true)
+    img.onerror = reject
+    img.src = src
+  })
+
 // même regex que ton renderHadith (cohérence)
 const splitHadithText = (text) => {
   if (!text) return { sanad: '', matn: '' }
@@ -356,8 +371,12 @@ const exportHadithImage = async () => {
 
   try {
     shareBusy.value = true
+
+    // ✅ important iOS: s'assurer que le BG est chargé + fonts prêtes
+    await preloadImage(SHARE_BG_URL).catch(() => {})
     await nextTick()
     await ensureFontsReady()
+    await nextTick()
 
     const dataUrl = await toPng(shareCardRef.value, {
       width: 1080,
@@ -366,6 +385,26 @@ const exportHadithImage = async () => {
       cacheBust: true
     })
 
+    // ✅ iPhone: ouvrir le Share Sheet (permet "Enregistrer dans Photos")
+    if (process.client && isIOS() && navigator?.share) {
+      const blob = await (await fetch(dataUrl)).blob()
+      const file = new File([blob], `hadith_${selectedHadith.value.id}.png`, { type: 'image/png' })
+
+      // si iOS accepte le fichier via share → parfait
+      if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `Hadith ${selectedHadith.value.id}`
+        })
+        return
+      }
+
+      // fallback iOS: ouvrir l'image dans un nouvel onglet (au moins visible)
+      window.open(dataUrl, '_blank')
+      return
+    }
+
+    // ✅ Desktop/Android: téléchargement classique
     const a = document.createElement('a')
     a.href = dataUrl
     a.download = `hadith_${selectedHadith.value.id}.png`
@@ -718,7 +757,12 @@ const exportHadithImage = async () => {
       </div>
 
       <!-- ✅ AJOUT: OFFSCREEN SHARE CARD (ne casse pas le layout) -->
-<div class="fixed -left-[99999px] top-0 opacity-0 pointer-events-none">
+<div
+  class="fixed opacity-0 pointer-events-none"
+  :style="isIOS()
+    ? { left: '0px', top: '0px', zIndex: -10 }
+    : { left: '-99999px', top: '0px' }"
+>
   <div
     ref="shareCardRef"
     class="relative overflow-hidden"
@@ -834,3 +878,4 @@ const exportHadithImage = async () => {
   box-shadow: none;
 }
 </style>
+
