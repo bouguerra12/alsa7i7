@@ -177,13 +177,12 @@ const renderHadith = (text) => {
       '<span class="text-emerald-600 dark:text-emerald-400 font-bold">$1</span>'
     )
 
-    // ✅ IMPORTANT : parenthèse (matn-box) appliquée UNIQUEMENT au MATN
     return `
       <div class="text-sm leading-loose text-slate-500 dark:text-slate-400 mb-4 font-sanad text-justify">
         ${formattedSanad}
       </div>
       <div class="matn-box relative">
-        <p class="text-2xl md:text-3xl font-serif leading-[2.4] md:leading-[2.8] lg:leading-[3.0]  text-slate-900 dark:text-white font-bold text-justify">
+        <p class="text-2xl md:text-3xl font-serif leading-[2.4] md:leading-[2.8] lg:leading-[3.0] text-slate-900 dark:text-white font-bold text-justify">
           ${matn}
         </p>
       </div>
@@ -192,7 +191,7 @@ const renderHadith = (text) => {
 
   return `
     <div class="matn-box relative">
-      <p class="text-2xl md:text-3xl font-serif leading-[2.4] md:leading-[2.8] lg:leading-[3.0]  text-slate-900 dark:text-white font-bold text-justify">
+      <p class="text-2xl md:text-3xl font-serif leading-[2.4] md:leading-[2.8] lg:leading-[3.0] text-slate-900 dark:text-white font-bold text-justify">
         ${text}
       </p>
     </div>
@@ -240,7 +239,6 @@ const paginatedList = computed(() => {
 
 const totalPages = computed(() => Math.ceil(filteredList.value.length / itemsPerPage))
 
-// ✅ AJOUT: quand on change filtre/recherche, on revient en haut aussi
 watch([searchQuery, selectedCategory], () => {
   page.value = 1
   scrollToTop()
@@ -249,27 +247,20 @@ watch([searchQuery, selectedCategory], () => {
 //✅ AJOUT: ====== SHARE CARD (IMAGE EXPORT) ======
 const shareCardRef = ref(null)
 const shareBusy = ref(false)
-
-// ton background fixe (logo + youtube déjà dedans)
-const SHARE_BG_URL = '/share/bg1080x1920.png' // public/share/bg1080x1920.png
-
+const SHARE_BG_URL = '/share/bg1080x1920.png'
 const getHadithShareUrl = (id) => `https://alsa7i7.com/bukhari/${id}`
 
-// ✅ iOS helpers (pour éviter le bug iPhone + permettre "Enregistrer dans Photos")
 const isIOS = () => {
   if (!process.client) return false
   const ua = navigator.userAgent || ''
   return /iPad|iPhone|iPod/.test(ua)
 }
 
-const preloadImage = (src) =>
-  new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => resolve(true)
-    img.onerror = () => resolve(false)
-    img.src = src
-    if (img.complete) resolve(true)
-  })
+const ensureFontsReady = async () => {
+  if (process.client && document?.fonts?.ready) {
+    await document.fonts.ready
+  }
+}
 
 // même regex que ton renderHadith (cohérence)
 const splitHadithText = (text) => {
@@ -297,23 +288,11 @@ const getShareLayout = (text) => {
   const len = (matn || '').length
   const sanadLen = (sanad || '').length
 
-  // padding horizontal global
   let padX = 90
-
-  // tailles sanad
   let sanadSize = 28
   let sanadLH = 1.7
-
-  // ✅ tailles matn (AGRANDI)
   let matnSize = 52
   let matnLH = 2.0
-
-  // padding box matn
-  let boxPadX = 44
-  let boxPadY = 36
-
-  // align vertical dans la safe-zone
-  // (si texte très long → on démarre en haut au lieu de centrer)
   let vAlign = 'center'
 
   if (len > 650) {
@@ -321,28 +300,21 @@ const getShareLayout = (text) => {
     sanadSize = 22
     matnSize = 38
     matnLH = 1.75
-    boxPadX = 34
-    boxPadY = 28
     vAlign = 'flex-start'
   } else if (len > 420) {
     padX = 84
     sanadSize = 24
     matnSize = 42
     matnLH = 1.85
-    boxPadX = 38
-    boxPadY = 30
     vAlign = 'center'
   } else if (len < 220) {
     padX = 96
     sanadSize = 28
     matnSize = 60
     matnLH = 2.1
-    boxPadX = 46
-    boxPadY = 38
     vAlign = 'center'
   }
 
-  // si sanad énorme, on réduit un peu
   if (sanadLen > 260) {
     sanadSize = Math.max(20, sanadSize - 3)
   }
@@ -355,56 +327,191 @@ const getShareLayout = (text) => {
     sanadLH,
     matnSize,
     matnLH,
-    boxPadX,
-    boxPadY,
     vAlign
   }
 }
 
-const ensureFontsReady = async () => {
-  if (process.client && document?.fonts?.ready) {
-    await document.fonts.ready
+// ✅ helpers canvas iOS
+const loadImageBitmap = async (src) => {
+  const res = await fetch(src, { cache: 'no-store' })
+  const blob = await res.blob()
+  if ('createImageBitmap' in window) {
+    return await createImageBitmap(blob)
   }
+  const url = URL.createObjectURL(blob)
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  await new Promise((resolve, reject) => {
+    img.onload = resolve
+    img.onerror = reject
+    img.src = url
+  })
+  return img
+}
+
+const wrapLines = (ctx, text, maxWidth) => {
+  if (!text) return []
+  const words = text.split(/\s+/).filter(Boolean)
+  const lines = []
+  let line = ''
+
+  for (const w of words) {
+    const test = line ? `${line} ${w}` : w
+    const width = ctx.measureText(test).width
+    if (width <= maxWidth) {
+      line = test
+    } else {
+      if (line) lines.push(line)
+      line = w
+    }
+  }
+  if (line) lines.push(line)
+  return lines
+}
+
+const exportHadithImageIOS = async () => {
+  const h = selectedHadith.value
+  if (!h) return
+
+  await ensureFontsReady()
+
+  const W = 1080
+  const H = 1920
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas not supported')
+
+  // bg
+  const bg = await loadImageBitmap(SHARE_BG_URL)
+  ctx.drawImage(bg, 0, 0, W, H)
+
+  const v = getShareLayout(h.text_chakl)
+  const safeTop = 360
+  const safeBottom = 300
+  const safeH = H - safeTop - safeBottom
+  const maxWidth = W - v.padX * 2
+  const xRight = W - v.padX
+  const xLeft = v.padX
+
+  ctx.direction = 'rtl'
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'top'
+
+  // sanad lines
+  ctx.fillStyle = 'rgba(0,0,0,.60)'
+  ctx.font = `600 ${v.sanadSize}px "Noto Kufi Arabic","Tahoma","Arial",sans-serif`
+  const sanadLines = v.sanad ? wrapLines(ctx, v.sanad, maxWidth) : []
+  const sanadLineH = v.sanadSize * v.sanadLH
+  const sanadH = sanadLines.length * sanadLineH
+
+  // matn lines
+  ctx.fillStyle = '#000'
+  ctx.font = `800 ${v.matnSize}px "Amiri","Noto Naskh Arabic","Tahoma","Arial",sans-serif`
+  const matnLines = v.matn ? wrapLines(ctx, v.matn, maxWidth) : []
+  const matnLineH = v.matnSize * v.matnLH
+  const matnH = matnLines.length * matnLineH
+
+  const gap1 = sanadLines.length ? 32 : 0
+  const gap2 = 40
+  const footerH = 40
+  const totalH = sanadH + gap1 + matnH + gap2 + footerH
+
+  let y = safeTop
+  if (v.vAlign === 'center' && totalH < safeH) {
+    y = safeTop + Math.floor((safeH - totalH) / 2)
+  }
+
+  // draw sanad
+  if (sanadLines.length) {
+    ctx.fillStyle = 'rgba(0,0,0,.60)'
+    ctx.font = `600 ${v.sanadSize}px "Noto Kufi Arabic","Tahoma","Arial",sans-serif`
+    for (const line of sanadLines) {
+      ctx.fillText(line, xRight, y)
+      y += sanadLineH
+    }
+    y += gap1
+  }
+
+  // draw matn (shadow)
+  ctx.fillStyle = '#000'
+  ctx.font = `800 ${v.matnSize}px "Amiri","Noto Naskh Arabic","Tahoma","Arial",sans-serif`
+  ctx.shadowColor = 'rgba(255,255,255,.65)'
+  ctx.shadowBlur = 10
+  ctx.shadowOffsetX = 0
+  ctx.shadowOffsetY = 2
+
+  for (const line of matnLines) {
+    ctx.fillText(line, xRight, y)
+    y += matnLineH
+  }
+
+  // reset shadow
+  ctx.shadowColor = 'transparent'
+  ctx.shadowBlur = 0
+  ctx.shadowOffsetX = 0
+  ctx.shadowOffsetY = 0
+
+  y += gap2
+
+  // footer
+  ctx.fillStyle = 'rgba(0,0,0,.60)'
+  ctx.direction = 'rtl'
+  ctx.textAlign = 'right'
+  ctx.font = `600 28px "Noto Kufi Arabic","Tahoma","Arial",sans-serif`
+  ctx.fillText(`صحيح البخاري — حديث رقم ${h.id}`, xRight, y)
+
+  ctx.direction = 'ltr'
+  ctx.textAlign = 'left'
+  ctx.font = `600 26px Tahoma, Arial, sans-serif`
+  ctx.fillText(getHadithShareUrl(h.id), xLeft, y + 2)
+
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png', 1.0))
+  if (!blob) throw new Error('toBlob failed')
+
+  const blobUrl = URL.createObjectURL(blob)
+
+  // ✅ iOS: ouvrir nouvel onglet => “Enregistrer l’image”
+  window.open(blobUrl, '_blank')
+
+  // ✅ essai Share Sheet (si dispo)
+  try {
+    if (navigator?.share) {
+      const file = new File([blob], `hadith_${h.id}.png`, { type: 'image/png' })
+      if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: `Hadith ${h.id}` })
+      }
+    }
+  } catch (_) {}
 }
 
 const exportHadithImage = async () => {
-  if (!selectedHadith.value || !shareCardRef.value) return
+  if (!selectedHadith.value) return
 
   try {
     shareBusy.value = true
-
-    // ✅ important iOS: s'assurer que le BG est chargé + fonts prêtes
-    await preloadImage(SHARE_BG_URL)
     await nextTick()
     await ensureFontsReady()
     await nextTick()
 
-    const dataUrl = await toPng(shareCardRef.value, {
-      width: 1080,
-      height: 1920,
-      pixelRatio: 2, // جودة عالية
-      cacheBust: true
-    })
-
-    // ✅ iPhone: ouvrir le Share Sheet (permet "Enregistrer dans Photos")
-    if (process.client && isIOS() && navigator?.share) {
-      const blob = await (await fetch(dataUrl)).blob()
-      const file = new File([blob], `hadith_${selectedHadith.value.id}.png`, { type: 'image/png' })
-
-      if (!navigator.canShare || navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: `Hadith ${selectedHadith.value.id}`
-        })
-        return
-      }
-
-      // fallback iOS
-      window.open(dataUrl, '_blank')
+    // ✅ iOS => canvas (stable)
+    if (process.client && isIOS()) {
+      await exportHadithImageIOS()
       return
     }
 
-    // ✅ Desktop/Android: téléchargement classique
+    // ✅ Desktop/Android => html-to-image
+    if (!shareCardRef.value) return
+
+    const dataUrl = await toPng(shareCardRef.value, {
+      width: 1080,
+      height: 1920,
+      pixelRatio: 2,
+      cacheBust: true
+    })
+
     const a = document.createElement('a')
     a.href = dataUrl
     a.download = `hadith_${selectedHadith.value.id}.png`
@@ -445,7 +552,6 @@ const exportHadithImage = async () => {
           </div>
         </div>
 
-        <!-- ✅ AJOUT: bouton الكتب (mobile) + theme (inchangé) -->
         <div class="flex items-center gap-2">
           <button
             @click="openBooksMenu"
@@ -637,7 +743,7 @@ const exportHadithImage = async () => {
             <button
               @click="prevPage"
               :disabled="page === 1"
-              class="w-12 h-12 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm flex items ditems-center justify-center hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-30 transition dark:text-white"
+              class="w-12 h-12 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm flex items-center justify-center hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-30 transition dark:text-white"
             >
               <span>→</span>
             </button>
@@ -659,7 +765,6 @@ const exportHadithImage = async () => {
         </section>
       </div>
 
-      <!-- ✅ AJOUT: bouton retour en haut -->
       <button
         v-if="showScrollTop"
         @click="scrollToTop"
@@ -677,7 +782,6 @@ const exportHadithImage = async () => {
           class="relative bg-white dark:bg-[#0f172a] w-full max-w-4xl max-h-[90vh] rounded-[2rem] shadow-2xl flex flex-col overflow-hidden animate-slide-up border border-slate-200 dark:border-slate-800"
         >
           <div class="px-8 py-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-[#0f172a] sticky top-0 z-10">
-            <!-- ✅ SEULE MODIF ICI : + bouton 📷 بعد 🔗 -->
             <div class="flex items-center gap-3">
               <h3 class="text-xl font-bold text-slate-800 dark:text-white">
                 حديث رقم {{ selectedHadith?.id || '...' }}
@@ -691,7 +795,6 @@ const exportHadithImage = async () => {
                 🔗 صفحة مستقلة
               </NuxtLink>
 
-              <!-- ✅ AJOUT: bouton export image -->
               <button
                 v-if="selectedHadith"
                 @click="exportHadithImage"
@@ -756,7 +859,7 @@ const exportHadithImage = async () => {
         </div>
       </div>
 
-      <!-- ✅ AJOUT: OFFSCREEN SHARE CARD (ne casse pas le layout) -->
+      <!-- ✅ OFFSCREEN SHARE CARD (Desktop/Android فقط عملياً) -->
       <div
         class="fixed opacity-0 pointer-events-none"
         :style="isIOS()
@@ -772,7 +875,6 @@ const exportHadithImage = async () => {
             direction: 'rtl'
           }"
         >
-          <!-- ✅ BG réel (fix iOS Safari: background-image souvent ignoré) -->
           <img
             :src="SHARE_BG_URL"
             class="absolute inset-0 w-full h-full object-cover"
@@ -780,11 +882,9 @@ const exportHadithImage = async () => {
             draggable="false"
           />
 
-          <!-- ✅ contenu au-dessus -->
           <div class="relative z-[1] w-full h-full">
             <template v-if="selectedHadith">
               <template v-for="(v, k) in [getShareLayout(selectedHadith.text_chakl)]" :key="k">
-                <!-- ✅ SAFE AREA: zone centrale (entre décor haut/bas) -->
                 <div
                   class="absolute left-0 right-0"
                   :style="{
@@ -796,7 +896,6 @@ const exportHadithImage = async () => {
                     justifyContent: v.vAlign
                   }"
                 >
-                  <!-- ✅ SANAD : même police que ton site (Noto Kufi Arabic) -->
                   <div
                     v-if="v.sanad"
                     class="text-justify"
@@ -811,7 +910,6 @@ const exportHadithImage = async () => {
                     {{ v.sanad }}
                   </div>
 
-                  <!-- MATN (sans box) -->
                   <div
                     class="mt-8 text-justify"
                     :style="{
@@ -826,7 +924,6 @@ const exportHadithImage = async () => {
                     {{ v.matn }}
                   </div>
 
-                  <!-- footer -->
                   <div class="mt-10 flex items-center justify-between">
                     <div
                       :style="{
@@ -855,7 +952,6 @@ const exportHadithImage = async () => {
           </div>
         </div>
       </div>
-      <!-- ✅ نهاية إضافة -->
     </main>
   </div>
 </template>
@@ -871,7 +967,6 @@ const exportHadithImage = async () => {
 @keyframes slide-up { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 .animate-slide-up { animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
 
-/* ✅ COPIE EXACTE DU CSS "PARENTHÈSE" (rien d'autre) */
 .matn-box {
   background: linear-gradient(to left, #ffffff 0%, #f8fafc 100%);
   border-right: 5px solid #10B981;
