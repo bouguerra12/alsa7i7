@@ -9,6 +9,11 @@ export default defineNuxtConfig({
   // ✅ Modules
   modules: ['@nuxtjs/tailwindcss'],
 
+  // ✅ Runtime config (SERVER ONLY)
+  runtimeConfig: {
+    ytApiKey: process.env.YT_API_KEY // ⚠️ clé YouTube API (jamais exposée au client)
+  },
+
   // --- SEO CONFIGURATION (Generate Static Routes) ---
   hooks: {
     async 'nitro:config'(nitroConfig) {
@@ -30,7 +35,9 @@ export default defineNuxtConfig({
 
           console.log(`✅ SEO: Added ${routes.length} Bukhari hadith pages to generation queue.`)
         } else {
-          console.warn("⚠️ Warning: public/data/bukhari/index_min.json not found. Did you run the Python script?")
+          console.warn(
+            '⚠️ Warning: public/data/bukhari/index_min.json not found. Did you run the Python script?'
+          )
         }
       } catch (e) {
         console.error('⚠️ Error reading index_min.json for SEO:', e)
@@ -38,14 +45,21 @@ export default defineNuxtConfig({
     }
   },
 
+  // --- APP HEAD / SEO GLOBAL ---
   app: {
     head: {
-      htmlAttrs: { lang: 'ar', dir: 'rtl' },
+      htmlAttrs: {
+        lang: 'ar',
+        dir: 'rtl'
+      },
       title: 'Al-Sahih - صحيح البخاري',
       meta: [
-        { name: 'description', content: 'البحث في صحيح البخاري بدقة وسرعة مع الشرح.' },
+        { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { charset: 'utf-8' }
+        {
+          name: 'description',
+          content: 'البحث في صحيح البخاري بدقة وسرعة مع الشرح.'
+        }
       ],
       link: [
         { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
@@ -60,9 +74,12 @@ export default defineNuxtConfig({
         }
       ],
 
-      // ✅ Google tag (gtag.js) - officiel
+      // ✅ Google Analytics (gtag.js)
       script: [
-        { async: true, src: 'https://www.googletagmanager.com/gtag/js?id=G-P7J0S59D58' },
+        {
+          async: true,
+          src: 'https://www.googletagmanager.com/gtag/js?id=G-P7J0S59D58'
+        },
         {
           children: `
             window.dataLayer = window.dataLayer || [];
