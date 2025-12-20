@@ -5,7 +5,10 @@ export default defineEventHandler(async (event) => {
 
   if (!key) {
     setResponseStatus(event, 500)
-    return { error: 'Missing YT_API_KEY (runtimeConfig.ytApiKey)' }
+      return {
+    hasKey: !!key,
+    len: key?.length || 0,
+      }
   }
 
   // ✅ Mets ici TON channelId (format UC...)
