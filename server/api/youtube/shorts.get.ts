@@ -5,13 +5,10 @@ export default defineEventHandler(async (event) => {
 
   if (!key) {
     setResponseStatus(event, 500)
-      return {
-    hasKey: !!key,
-    len: key?.length || 0,
-      }
+    return { error: 'Missing YT_API_KEY (runtimeConfig.ytApiKey)' }
   }
 
-  // ✅ Mets ici TON channelId (format UC...)
+  // ✅ TON channelId (format UC...)
   const CHANNEL_ID = 'UCvf66KiiFwxLnDQ_d0djykA'
 
   // ✅ Cache (Vercel/CDN) : 15 min + stale revalidate
@@ -33,7 +30,7 @@ export default defineEventHandler(async (event) => {
 
   if (!ids.length) return []
 
-  // 2) Charger détails (durée + titre + thumbnails)
+  // 2) Charger détails (titre + thumbnails + durée si tu veux l'afficher)
   const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
   videosUrl.searchParams.set('key', key)
   videosUrl.searchParams.set('part', 'contentDetails,snippet')
@@ -42,7 +39,7 @@ export default defineEventHandler(async (event) => {
   const videosRes = await $fetch<any>(videosUrl.toString())
   const items = (videosRes?.items || []) as any[]
 
-  // ISO 8601 duration PT#H#M#S -> secondes
+  // ISO 8601 duration PT#H#M#S -> secondes (on le garde si tu veux l'afficher)
   const isoToSec = (iso: string): number => {
     const m = iso?.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/)
     if (!m) return 0
@@ -52,8 +49,8 @@ export default defineEventHandler(async (event) => {
     return h * 3600 + min * 60 + s
   }
 
-  // 3) Filtrer shorts (< 60s) + trier par date + garder 3
-  const shorts = items
+  // 3) ✅ PLUS DE FILTRE SUR LA DURÉE
+  const latest = items
     .map((v) => {
       const id = v?.id
       const publishedAt = v?.snippet?.publishedAt || ''
@@ -61,31 +58,27 @@ export default defineEventHandler(async (event) => {
       const durationIso = v?.contentDetails?.duration || ''
       const durationSec = isoToSec(durationIso)
 
-      // ✅ Thumbs: prefer maxres > standard > high > medium > default
-      // + fallback to ytimg maxres/sd/hq
       const thumb =
         v?.snippet?.thumbnails?.maxres?.url ||
         v?.snippet?.thumbnails?.standard?.url ||
         v?.snippet?.thumbnails?.high?.url ||
         v?.snippet?.thumbnails?.medium?.url ||
         v?.snippet?.thumbnails?.default?.url ||
-        `https://i.ytimg.com/vi/${id}/maxresdefault.jpg` ||
-        `https://i.ytimg.com/vi/${id}/sddefault.jpg` ||
-        `https://i.ytimg.com/vi/${id}/hqdefault.jpg`
+        `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`
 
       return {
         id,
         title,
         publishedAt,
         durationSec,
-        url: `https://www.youtube.com/shorts/${id}`,
+        url: `https://www.youtube.com/watch?v=${id}`, // ✅ correct pour vidéos longues + shorts
         embed: `https://www.youtube.com/embed/${id}`,
         thumb,
       }
     })
-    .filter((x) => x.id && x.durationSec > 0 && x.durationSec < 60)
+    .filter((x) => x.id) // ✅ on garde juste le check id
     .sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1))
     .slice(0, 3)
 
-  return shorts
+  return latest
 })
