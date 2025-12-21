@@ -12,13 +12,26 @@ if (!fs.existsSync(INDEX_PATH)) {
 
 const data = JSON.parse(fs.readFileSync(INDEX_PATH, 'utf-8'))
 
-const urls = data.map(h => `
+if (!Array.isArray(data)) {
+  console.error('❌ index_min.json invalide (pas un tableau)')
+  process.exit(1)
+}
+
+// ✅ Canonical URLs uniquement : /bukhari/<uid>
+const urls = data
+  .map((h) => {
+    const slug = h?.uid ?? null
+    if (!slug) return null
+
+    return `
   <url>
-    <loc>${SITE_URL}/bukhari/${h.id}</loc>
+    <loc>${SITE_URL}/bukhari/${slug}</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
-  </url>
-`).join('')
+  </url>`
+  })
+  .filter(Boolean)
+  .join('')
 
 const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -32,9 +45,9 @@ const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
-  ${urls}
+${urls}
 </urlset>
 `
 
 fs.writeFileSync(OUT_PATH, sitemap.trim())
-console.log(`✅ sitemap.xml généré (${data.length} hadiths)`)
+console.log(`✅ sitemap.xml généré (${data.length} hadiths, URLs canoniques uniquement)`)

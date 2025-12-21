@@ -26,7 +26,14 @@ export default defineNuxtConfig({
           const content = fs.readFileSync(filePath, 'utf-8')
           const data = JSON.parse(content)
 
-          const routes = data.map((h: any) => `/bukhari/${h.id}`)
+          // ✅ Canonical route is /bukhari/<uid> (ex: 22-17)
+          // Fallback on id only if uid not present (temporary compatibility)
+          const routes = (Array.isArray(data) ? data : [])
+            .map((h: any) => {
+              const slug = h?.uid ?? h?.id
+              return slug ? `/bukhari/${slug}` : null
+            })
+            .filter(Boolean) as string[]
 
           if (!nitroConfig.prerender) nitroConfig.prerender = {}
           if (!nitroConfig.prerender.routes) nitroConfig.prerender.routes = []
