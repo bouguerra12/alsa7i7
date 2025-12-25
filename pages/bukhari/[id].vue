@@ -222,9 +222,7 @@ useHead(() => {
 const copied = ref(false)
 
 const getHadithShareUrl = (uid) => {
-  // ✅ إذا عندك دومين prod
   if (uid) return `https://alsa7i7.com/bukhari/${uid}`
-  // fallback
   return process.client ? window.location.href : ''
 }
 
@@ -239,18 +237,15 @@ const buildCopyText = () => {
   const en = h?.english_text || ''
   const book = bookNameAr.value || ''
 
-  // RTL محفوظ (النص كما هو)
   let out = `صحيح البخاري #${num}\n${book}\n\n${ar}`.trim()
 
   if (en) out += `\n\n---\n${en}`
-
   if (url) out += `\n\n${url}`
 
   return out
 }
 
 const fallbackCopy = async (text) => {
-  // ✅ iOS قديم / permissions
   const ta = document.createElement('textarea')
   ta.value = text
   ta.setAttribute('readonly', '')
@@ -280,6 +275,63 @@ const copyHadith = async () => {
   } catch (e) {
     console.error(e)
     alert('تعذر النسخ')
+  }
+}
+
+/* =========================
+   ✅ SHARE (Link/Text) — Web + iPhone
+========================= */
+const shareBusy2 = ref(false)
+
+const buildSharePayload = () => {
+  const m = meta.value
+  const h = hadith.value
+  const num = m?.sr || m?.id || m?.uid || slug
+  const uid = m?.uid || ''
+  const url = getHadithShareUrl(uid)
+  const book = bookNameAr.value || ''
+
+  const ar = (h?.text_chakl || '').trim()
+  const en = (h?.english_text || '').trim()
+
+  const shortAr = ar.length > 700 ? ar.slice(0, 700).trimEnd() + '…' : ar
+  const shortEn = en ? (en.length > 500 ? en.slice(0, 500).trimEnd() + '…' : en) : ''
+
+  const text = [`صحيح البخاري #${num}`, book, '', shortAr, shortEn ? `\n---\n${shortEn}` : '', '', url]
+    .filter(Boolean)
+    .join('\n')
+
+  const title = `صحيح البخاري #${num}`
+  return { title, text, url }
+}
+
+const shareHadith = async () => {
+  try {
+    if (!process.client) return
+    if (!hadith.value || !meta.value) return
+
+    shareBusy2.value = true
+
+    const { title, text, url } = buildSharePayload()
+
+    if (navigator?.share) {
+      try {
+        await navigator.share({ title, text, url })
+        return
+      } catch (e) {
+        const shortText = text.slice(0, 350)
+        await navigator.share({ title, text: shortText, url })
+        return
+      }
+    }
+
+    // fallback desktop
+    await copyHadith()
+  } catch (e) {
+    console.error(e)
+    alert('تعذر المشاركة')
+  } finally {
+    shareBusy2.value = false
   }
 }
 
@@ -404,6 +456,9 @@ const exportHadithImageIOS = async () => {
   const m = meta.value
   if (!h || !m) return
 
+  // ✅ ouvrir tout de suite (Safari iOS bloque parfois window.open après async)
+  const newTab = window.open('', '_blank')
+
   await ensureFontsReady()
 
   const W = 1080
@@ -502,7 +557,8 @@ const exportHadithImageIOS = async () => {
   if (!blob) throw new Error('toBlob failed')
 
   const blobUrl = URL.createObjectURL(blob)
-  window.open(blobUrl, '_blank')
+  if (newTab) newTab.location.href = blobUrl
+  else window.open(blobUrl, '_blank')
 
   try {
     if (navigator?.share) {
@@ -588,6 +644,20 @@ const exportHadithImage = async () => {
             <span>📚</span>
             <span dir="rtl">{{ bookNameAr }}</span>
           </NuxtLink>
+
+          <!-- ✅ Share -->
+          <button
+            type="button"
+            @click="shareHadith"
+            :disabled="shareBusy2"
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white
+                   text-slate-700 hover:text-emerald-700 hover:border-emerald-200 transition text-sm font-sanad
+                   disabled:opacity-50"
+            title="مشاركة الحديث"
+          >
+            <span>📤</span>
+            <span>{{ shareBusy2 ? '...' : 'مشاركة' }}</span>
+          </button>
 
           <!-- ✅ Copy -->
           <button
@@ -677,12 +747,8 @@ const exportHadithImage = async () => {
     <!-- ERREUR -->
     <div v-else-if="error" class="text-center py-40">
       <div class="text-4xl mb-4">⚠️</div>
-      <p class="text-xl text-slate-500 mb-6">
-        عذراً، الحديث ({{ slug }}) غير متوفر.
-      </p>
-      <NuxtLink to="/bukhari" class="text-emerald-600 underline mt-4 block">
-        العودة للرئيسية
-      </NuxtLink>
+      <p class="text-xl text-slate-500 mb-6">عذراً، الحديث ({{ slug }}) غير متوفر.</p>
+      <NuxtLink to="/bukhari" class="text-emerald-600 underline mt-4 block">العودة للرئيسية</NuxtLink>
     </div>
 
     <!-- LOADER -->
@@ -701,12 +767,7 @@ const exportHadithImage = async () => {
         class="relative overflow-hidden"
         :style="{ width: '1080px', height: '1920px', direction: 'rtl' }"
       >
-        <img
-          :src="SHARE_BG_URL"
-          class="absolute inset-0 w-full h-full object-cover"
-          alt=""
-          draggable="false"
-        />
+        <img :src="SHARE_BG_URL" class="absolute inset-0 w-full h-full object-cover" alt="" draggable="false" />
 
         <div class="relative z-[1] w-full h-full">
           <template v-if="hadith">
