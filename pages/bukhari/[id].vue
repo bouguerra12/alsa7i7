@@ -1,4 +1,6 @@
 <script setup>
+import { toPng } from 'html-to-image'
+
 const route = useRoute()
 
 // slug peut être "22-17" (canonique) ou "1237" (ancien alias)
@@ -42,7 +44,13 @@ const parseUid = (u) => {
 
 const isNumericOnly = (v) => /^\d+$/.test(String(v || '').trim())
 
-// --- 1. CHARGEMENT + SEO ---
+// ✅ Strip tashkīl (تشكيل)
+const stripTashkil = (str = '') => String(str).replace(/[\u064B-\u065F\u0670]/g, '')
+
+// ✅ util: safe string compare for ids (number/string)
+const eqId = (a, b) => String(a ?? '').trim() !== '' && String(a ?? '') === String(b ?? '')
+
+// --- 1) CHARGEMENT HADITH ---
 const { data: payload, error } = await useAsyncData(`hadith-${slug}`, async () => {
   try {
     // 1️⃣ index
@@ -57,7 +65,7 @@ const { data: payload, error } = await useAsyncData(`hadith-${slug}`, async () =
       meta = index.find((h) => String(h.uid) === slug)
       if (!meta) throw new Error(`UID ${slug} introuvable`)
     }
-    // ✅ Alias legacy: /bukhari/1237 (peut être doublonné → on prend le 1er)
+    // ✅ Alias legacy: /bukhari/1237
     else if (isNumericOnly(slug)) {
       const matches = index.filter((h) => h.id != null && String(h.id) === slug)
       if (!matches.length) throw new Error(`ID ${slug} introuvable`)
@@ -70,9 +78,10 @@ const { data: payload, error } = await useAsyncData(`hadith-${slug}`, async () =
     const book = await readPublicJson(`data/bukhari/books/${meta.bf}.json`)
     if (!Array.isArray(book)) throw new Error(`Livre ${meta.bf} invalide`)
 
-    // 3️⃣ hadith final (déterministe)
-    const found =
-      Number.isInteger(meta.bi) && book[meta.bi] ? book[meta.bi] : book.find((h) => h.id == meta.id)
+    // 3️⃣ hadith final
+    let found = null
+    if (Number.isInteger(meta.bi) && book[meta.bi]) found = book[meta.bi]
+    else found = book.find((h) => eqId(h?.id, meta.id))
 
     if (!found) throw new Error(`Hadith introuvable dans le livre ${meta.bf} (bi=${meta.bi})`)
 
@@ -90,18 +99,70 @@ const { data: payload, error } = await useAsyncData(`hadith-${slug}`, async () =
 const hadith = computed(() => payload.value?.hadith || null)
 const meta = computed(() => payload.value?.meta || null)
 
+// ✅ books_meta.json (noms des livres)
+const { data: booksMeta } = await useAsyncData('bukhari-books-meta', async () => {
+  return await readPublicJson('data/bukhari/books_meta.json')
+})
+
+// ✅ Lien du bouton livre → /bukhari?book=bf
+const bookLink = computed(() => {
+  const bf = meta.value?.bf
+  return bf ? `/bukhari?book=${bf}` : '/bukhari'
+})
+
+const bookNameAr = computed(() => {
+  const bf = meta.value?.bf
+  if (!bf) return ''
+  const key = String(bf)
+  return booksMeta.value?.[key]?.ar || `الكتاب ${bf}`
+})
+
 // ✅ Redirect client si on est sur l'ancien format /bukhari/1237
 watchEffect(async () => {
   if (!process.client) return
   if (!meta.value?.uid) return
-
-  // si l'URL actuelle n'est pas déjà uid, on replace
   if (slug !== meta.value.uid && isNumericOnly(slug)) {
     await navigateTo(`/bukhari/${meta.value.uid}`, { replace: true })
   }
 })
 
-// --- 2. AFFICHAGE (SANAD + MATN) ---
+/**
+ * ✅ Sépare sanad/matn
+ */
+const splitSanadMatn = (text) => {
+  if (!text) return { sanad: '', matn: '' }
+
+  const regex =
+    /((?:صَلَّى.*?وَسَلَّمَ|صلى الله عليه وسلم)(?:\s+(?:يَقُولُ|قَالَ|يُحَدِّثُ|خَطَبَ|يقول|قال|يحدث))?)/
+
+  const match = text.match(regex)
+
+  if (match && match.index > 0) {
+    const splitIdx = match.index + match[0].length
+    return {
+      sanad: text.substring(0, splitIdx),
+      matn: text.substring(splitIdx).trim()
+    }
+  }
+
+  return { sanad: '', matn: String(text).trim() }
+}
+
+const ellipsis = (s, max = 90) => {
+  const str = String(s || '').trim().replace(/\s+/g, ' ')
+  if (!str) return ''
+  if (str.length <= max) return str
+  return str.slice(0, max).trimEnd() + '…'
+}
+
+const titleFromMatnArNoTashkil = computed(() => {
+  const text = hadith.value?.text_chakl || ''
+  const { matn } = splitSanadMatn(text)
+  const start = ellipsis(matn, 110)
+  return stripTashkil(start)
+})
+
+// --- 2) RENDER HADITH (SANAD + MATN) ---
 const renderHadith = (text) => {
   if (!text) return ''
 
@@ -136,22 +197,359 @@ const renderHadith = (text) => {
   `
 }
 
-// --- 3. SEO ---
+// --- 3) SEO ---
 useHead(() => {
   const displayNumber = meta.value?.sr || meta.value?.id || meta.value?.uid || slug
-  const canonical = meta.value?.uid ? `/bukhari/${meta.value.uid}` : `/bukhari/${slug}`
+  const canonicalPath = meta.value?.uid ? `/bukhari/${meta.value.uid}` : `/bukhari/${slug}`
+
+  const arSeo = (titleFromMatnArNoTashkil.value || '').trim()
+  const enTitle = (hadith.value?.english_text || '').trim()
+
+  const bestTitle = (arSeo || enTitle || `حديث رقم ${displayNumber}`).trim()
+  const descFallback = (enTitle || arSeo || stripTashkil(hadith.value?.text_chakl || '')).replace(/\s+/g, ' ')
+  const description = descFallback.slice(0, 180)
 
   return {
-    title: hadith.value ? `حديث رقم ${displayNumber} - صحيح البخاري` : 'غير موجود',
-    meta: [
-      {
-        name: 'description',
-        content: hadith.value?.text_chakl?.substring(0, 160) || ''
-      }
-    ],
-    link: [{ rel: 'canonical', href: canonical }]
+    title: `${bestTitle} - صحيح البخاري #${displayNumber}`.trim(),
+    meta: [{ name: 'description', content: description }],
+    link: [{ rel: 'canonical', href: canonicalPath }]
   }
 })
+
+/* =========================
+   ✅ COPY (WEB + iPhone)
+========================= */
+const copied = ref(false)
+
+const getHadithShareUrl = (uid) => {
+  // ✅ إذا عندك دومين prod
+  if (uid) return `https://alsa7i7.com/bukhari/${uid}`
+  // fallback
+  return process.client ? window.location.href : ''
+}
+
+const buildCopyText = () => {
+  const h = hadith.value
+  const m = meta.value
+  const num = m?.sr || m?.id || m?.uid || slug
+  const uid = m?.uid || ''
+  const url = getHadithShareUrl(uid)
+
+  const ar = h?.text_chakl || ''
+  const en = h?.english_text || ''
+  const book = bookNameAr.value || ''
+
+  // RTL محفوظ (النص كما هو)
+  let out = `صحيح البخاري #${num}\n${book}\n\n${ar}`.trim()
+
+  if (en) out += `\n\n---\n${en}`
+
+  if (url) out += `\n\n${url}`
+
+  return out
+}
+
+const fallbackCopy = async (text) => {
+  // ✅ iOS قديم / permissions
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.setAttribute('readonly', '')
+  ta.style.position = 'fixed'
+  ta.style.top = '-9999px'
+  ta.style.left = '-9999px'
+  document.body.appendChild(ta)
+  ta.select()
+  ta.setSelectionRange(0, ta.value.length)
+  document.execCommand('copy')
+  ta.remove()
+}
+
+const copyHadith = async () => {
+  try {
+    if (!process.client) return
+    const text = buildCopyText()
+
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      await fallbackCopy(text)
+    }
+
+    copied.value = true
+    setTimeout(() => (copied.value = false), 1200)
+  } catch (e) {
+    console.error(e)
+    alert('تعذر النسخ')
+  }
+}
+
+/* =========================
+   ✅ SHARE CARD (IMAGE EXPORT)
+   - Web/Android: html-to-image (toPng)
+   - iPhone/iPad: Canvas (sûr)
+========================= */
+const shareCardRef = ref(null)
+const shareBusy = ref(false)
+const SHARE_BG_URL = '/share/bg1080x1920.png'
+
+const isIOS = () => {
+  if (!process.client) return false
+  const ua = navigator.userAgent || ''
+  return /iPad|iPhone|iPod/.test(ua)
+}
+
+const ensureFontsReady = async () => {
+  if (process.client && document?.fonts?.ready) {
+    await document.fonts.ready
+  }
+}
+
+const splitHadithText = (text) => {
+  if (!text) return { sanad: '', matn: '' }
+
+  const regex =
+    /((?:صَلَّى.*?وَسَلَّمَ|صلى الله عليه وسلم)(?:\s+(?:يَقُولُ|قَالَ|يُحَدِّثُ|خَطَبَ|يقول|قال|يحدث))?)/
+
+  const match = text.match(regex)
+
+  if (match && match.index > 0) {
+    const splitIdx = match.index + match[0].length
+    return {
+      sanad: text.substring(0, splitIdx).trim(),
+      matn: text.substring(splitIdx).trim()
+    }
+  }
+
+  return { sanad: '', matn: text.trim() }
+}
+
+const getShareLayout = (text) => {
+  const { sanad, matn } = splitHadithText(text)
+
+  const len = (matn || '').length
+  const sanadLen = (sanad || '').length
+
+  let padX = 90
+  let sanadSize = 28
+  let sanadLH = 1.7
+  let matnSize = 52
+  let matnLH = 2.0
+  let vAlign = 'center'
+
+  if (len > 650) {
+    padX = 78
+    sanadSize = 22
+    matnSize = 38
+    matnLH = 1.75
+    vAlign = 'flex-start'
+  } else if (len > 420) {
+    padX = 84
+    sanadSize = 24
+    matnSize = 42
+    matnLH = 1.85
+    vAlign = 'center'
+  } else if (len < 220) {
+    padX = 96
+    sanadSize = 28
+    matnSize = 60
+    matnLH = 2.1
+    vAlign = 'center'
+  }
+
+  if (sanadLen > 260) {
+    sanadSize = Math.max(20, sanadSize - 3)
+  }
+
+  return { sanad, matn, padX, sanadSize, sanadLH, matnSize, matnLH, vAlign }
+}
+
+// ✅ helpers canvas iOS
+const loadImageBitmap = async (src) => {
+  const res = await fetch(src, { cache: 'no-store' })
+  const blob = await res.blob()
+  if ('createImageBitmap' in window) return await createImageBitmap(blob)
+
+  const url = URL.createObjectURL(blob)
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  await new Promise((resolve, reject) => {
+    img.onload = resolve
+    img.onerror = reject
+    img.src = url
+  })
+  return img
+}
+
+const wrapLines = (ctx, text, maxWidth) => {
+  if (!text) return []
+  const words = text.split(/\s+/).filter(Boolean)
+  const lines = []
+  let line = ''
+
+  for (const w of words) {
+    const test = line ? `${line} ${w}` : w
+    const width = ctx.measureText(test).width
+    if (width <= maxWidth) line = test
+    else {
+      if (line) lines.push(line)
+      line = w
+    }
+  }
+  if (line) lines.push(line)
+  return lines
+}
+
+const exportHadithImageIOS = async () => {
+  const h = hadith.value
+  const m = meta.value
+  if (!h || !m) return
+
+  await ensureFontsReady()
+
+  const W = 1080
+  const H = 1920
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas not supported')
+
+  const bg = await loadImageBitmap(SHARE_BG_URL)
+  ctx.drawImage(bg, 0, 0, W, H)
+
+  const v = getShareLayout(h.text_chakl)
+  const safeTop = 360
+  const safeBottom = 300
+  const safeH = H - safeTop - safeBottom
+  const maxWidth = W - v.padX * 2
+  const xRight = W - v.padX
+  const xLeft = v.padX
+
+  ctx.direction = 'rtl'
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'top'
+
+  // sanad
+  ctx.fillStyle = 'rgba(0,0,0,.60)'
+  ctx.font = `600 ${v.sanadSize}px "Noto Kufi Arabic","Tahoma","Arial",sans-serif`
+  const sanadLines = v.sanad ? wrapLines(ctx, v.sanad, maxWidth) : []
+  const sanadLineH = v.sanadSize * v.sanadLH
+  const sanadH = sanadLines.length * sanadLineH
+
+  // matn
+  ctx.fillStyle = '#000'
+  ctx.font = `800 ${v.matnSize}px "Amiri","Noto Naskh Arabic","Tahoma","Arial",sans-serif`
+  const matnLines = v.matn ? wrapLines(ctx, v.matn, maxWidth) : []
+  const matnLineH = v.matnSize * v.matnLH
+  const matnH = matnLines.length * matnLineH
+
+  const gap1 = sanadLines.length ? 32 : 0
+  const gap2 = 40
+  const footerH = 40
+  const totalH = sanadH + gap1 + matnH + gap2 + footerH
+
+  let y = safeTop
+  if (v.vAlign === 'center' && totalH < safeH) {
+    y = safeTop + Math.floor((safeH - totalH) / 2)
+  }
+
+  if (sanadLines.length) {
+    ctx.fillStyle = 'rgba(0,0,0,.60)'
+    ctx.font = `600 ${v.sanadSize}px "Noto Kufi Arabic","Tahoma","Arial",sans-serif`
+    for (const line of sanadLines) {
+      ctx.fillText(line, xRight, y)
+      y += sanadLineH
+    }
+    y += gap1
+  }
+
+  ctx.fillStyle = '#000'
+  ctx.font = `800 ${v.matnSize}px "Amiri","Noto Naskh Arabic","Tahoma","Arial",sans-serif`
+  ctx.shadowColor = 'rgba(255,255,255,.65)'
+  ctx.shadowBlur = 10
+  ctx.shadowOffsetX = 0
+  ctx.shadowOffsetY = 2
+
+  for (const line of matnLines) {
+    ctx.fillText(line, xRight, y)
+    y += matnLineH
+  }
+
+  ctx.shadowColor = 'transparent'
+  ctx.shadowBlur = 0
+  ctx.shadowOffsetX = 0
+  ctx.shadowOffsetY = 0
+
+  y += gap2
+
+  const num = m?.sr || m?.id || m?.uid || ''
+  const uid = m?.uid || ''
+  const url = getHadithShareUrl(uid)
+
+  ctx.fillStyle = 'rgba(0,0,0,.60)'
+  ctx.direction = 'rtl'
+  ctx.textAlign = 'right'
+  ctx.font = `600 28px "Noto Kufi Arabic","Tahoma","Arial",sans-serif`
+  ctx.fillText(`صحيح البخاري — حديث رقم ${num}`, xRight, y)
+
+  ctx.direction = 'ltr'
+  ctx.textAlign = 'left'
+  ctx.font = `600 26px Tahoma, Arial, sans-serif`
+  ctx.fillText(url, xLeft, y + 2)
+
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png', 1.0))
+  if (!blob) throw new Error('toBlob failed')
+
+  const blobUrl = URL.createObjectURL(blob)
+  window.open(blobUrl, '_blank')
+
+  try {
+    if (navigator?.share) {
+      const file = new File([blob], `hadith_${uid || 'hadith'}.png`, { type: 'image/png' })
+      if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: `Hadith ${uid || ''}` })
+      }
+    }
+  } catch (_) {}
+}
+
+const exportHadithImage = async () => {
+  if (!hadith.value || !meta.value) return
+
+  try {
+    shareBusy.value = true
+    await nextTick()
+    await ensureFontsReady()
+    await nextTick()
+
+    if (process.client && isIOS()) {
+      await exportHadithImageIOS()
+      return
+    }
+
+    if (!shareCardRef.value) return
+
+    const dataUrl = await toPng(shareCardRef.value, {
+      width: 1080,
+      height: 1920,
+      pixelRatio: 2,
+      cacheBust: true
+    })
+
+    const a = document.createElement('a')
+    a.href = dataUrl
+    a.download = `hadith_${meta.value?.uid || meta.value?.id || 'hadith'}.png`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } catch (e) {
+    console.error(e)
+    alert('Erreur export image')
+  } finally {
+    shareBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -169,16 +567,75 @@ useHead(() => {
           ➡ العودة للفهرس
         </NuxtLink>
 
-        <h1 class="font-bold text-lg text-emerald-800">
-          صحيح البخاري
-          <span class="bg-emerald-100 px-2 py-0.5 rounded text-sm ml-2">
-            #{{ meta?.sr || meta?.id || meta?.uid || slug }}
-          </span>
-        </h1>
+        <!-- Right side -->
+        <div class="flex items-center gap-2 flex-wrap justify-end">
+          <h1 class="font-bold text-lg text-emerald-800">
+            صحيح البخاري
+            <span class="bg-emerald-100 px-2 py-0.5 rounded text-sm ml-2">
+              #{{ meta?.sr || meta?.id || meta?.uid || slug }}
+            </span>
+          </h1>
+
+          <!-- ✅ Bouton livre (font-sanad مثل صلى الله عليه وسلم يقول) -->
+          <NuxtLink
+            v-if="meta?.bf"
+            :to="bookLink"
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white
+                   text-emerald-800 hover:text-emerald-900 hover:border-emerald-300 transition
+                   text-sm font-sanad"
+            :title="`عرض أحاديث ${bookNameAr}`"
+          >
+            <span>📚</span>
+            <span dir="rtl">{{ bookNameAr }}</span>
+          </NuxtLink>
+
+          <!-- ✅ Copy -->
+          <button
+            type="button"
+            @click="copyHadith"
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white
+                   text-slate-700 hover:text-emerald-700 hover:border-emerald-200 transition text-sm font-sanad"
+            :title="copied ? 'تم النسخ' : 'نسخ الحديث'"
+          >
+            <span>📋</span>
+            <span>{{ copied ? 'تم النسخ' : 'نسخ' }}</span>
+          </button>
+
+          <!-- ✅ Capture image -->
+          <button
+            type="button"
+            @click="exportHadithImage"
+            :disabled="shareBusy"
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white
+                   text-slate-700 hover:text-emerald-700 hover:border-emerald-200 transition text-sm font-sanad
+                   disabled:opacity-50"
+            title="📷 التقاط صورة"
+          >
+            <span>📷</span>
+            <span>{{ shareBusy ? '...' : 'التقاط صورة' }}</span>
+          </button>
+        </div>
       </div>
 
       <!-- CONTENU -->
       <div class="p-8 md:p-12 space-y-10">
+        <div class="px-2">
+          <h2
+            v-if="titleFromMatnArNoTashkil"
+            class="mx-auto max-w-2xl text-center font-serif text-base md:text-lg font-semibold text-slate-700 leading-relaxed"
+          >
+            {{ titleFromMatnArNoTashkil }}
+          </h2>
+
+          <p
+            v-if="hadith.english_text"
+            class="mx-auto mt-2 max-w-2xl text-center text-xs md:text-sm text-slate-400"
+            dir="ltr"
+          >
+            {{ ellipsis(hadith.english_text, 110) }}
+          </p>
+        </div>
+
         <div
           v-if="hadith.youtube_id"
           class="mx-auto rounded-2xl overflow-hidden shadow-lg bg-black"
@@ -233,5 +690,105 @@ useHead(() => {
       <div class="text-4xl mb-4">📖</div>
       <p class="text-xl">جاري تحميل الحديث...</p>
     </div>
+
+    <!-- ✅ OFFSCREEN SHARE CARD (Web/Android) -->
+    <div
+      class="fixed opacity-0 pointer-events-none"
+      :style="isIOS() ? { left: '0px', top: '0px', zIndex: -10 } : { left: '-99999px', top: '0px' }"
+    >
+      <div
+        ref="shareCardRef"
+        class="relative overflow-hidden"
+        :style="{ width: '1080px', height: '1920px', direction: 'rtl' }"
+      >
+        <img
+          :src="SHARE_BG_URL"
+          class="absolute inset-0 w-full h-full object-cover"
+          alt=""
+          draggable="false"
+        />
+
+        <div class="relative z-[1] w-full h-full">
+          <template v-if="hadith">
+            <template v-for="(v, k) in [getShareLayout(hadith.text_chakl)]" :key="k">
+              <div
+                class="absolute left-0 right-0"
+                :style="{
+                  top: '360px',
+                  bottom: '300px',
+                  padding: `0 ${v.padX}px`,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: v.vAlign
+                }"
+              >
+                <div
+                  v-if="v.sanad"
+                  class="text-justify"
+                  :style="{
+                    fontFamily: `'Noto Kufi Arabic','Tahoma','Arial',sans-serif`,
+                    fontSize: v.sanadSize + 'px',
+                    lineHeight: v.sanadLH,
+                    color: 'rgba(0,0,0,.60)',
+                    fontWeight: 600
+                  }"
+                >
+                  {{ v.sanad }}
+                </div>
+
+                <div
+                  class="mt-8 text-justify"
+                  :style="{
+                    fontFamily: `'Amiri','Noto Naskh Arabic','Tahoma','Arial',sans-serif`,
+                    fontSize: v.matnSize + 'px',
+                    lineHeight: v.matnLH,
+                    color: '#000',
+                    fontWeight: 800,
+                    textShadow: '0 2px 10px rgba(255,255,255,.65)'
+                  }"
+                >
+                  {{ v.matn }}
+                </div>
+
+                <div class="mt-10 flex items-center justify-between">
+                  <div
+                    :style="{
+                      fontFamily: `'Noto Kufi Arabic','Tahoma','Arial',sans-serif`,
+                      fontSize: '28px',
+                      color: 'rgba(0,0,0,.60)'
+                    }"
+                  >
+                    صحيح البخاري — حديث رقم {{ meta?.sr || meta?.id || meta?.uid || '' }}
+                  </div>
+
+                  <div
+                    :style="{
+                      direction: 'ltr',
+                      fontFamily: `Tahoma, Arial, sans-serif`,
+                      fontSize: '26px',
+                      color: 'rgba(0,0,0,.60)'
+                    }"
+                  >
+                    {{ getHadithShareUrl(meta?.uid || '') }}
+                  </div>
+                </div>
+              </div>
+            </template>
+          </template>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.font-serif {
+  font-family: 'Amiri', serif;
+}
+.font-sanad {
+  font-family: 'Noto Kufi Arabic', sans-serif;
+}
+.dir-rtl {
+  direction: rtl;
+}
+</style>

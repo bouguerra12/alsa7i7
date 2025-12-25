@@ -84,7 +84,7 @@ onMounted(() => {
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl w-full px-4">
       <NuxtLink
-        to="/bukhari"
+        to="/bukhari?videos=1"
         class="bg-white rounded-3xl p-8 shadow-lg border border-emerald-100 hover:shadow-2xl hover:border-emerald-300 transition group cursor-pointer flex flex-col items-center text-center"
       >
         <div class="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center text-4xl mb-4 group-hover:scale-110 transition">

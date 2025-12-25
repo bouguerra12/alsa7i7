@@ -11,6 +11,9 @@ const searchQuery = ref('')
 // ✅ Filtre par livre (bf)
 const selectedBookBf = ref(null)
 
+// ✅ Filtre "avec فيديو"
+const showVideoOnly = ref(false)
+
 const page = ref(1)
 const itemsPerPage = 15
 const fuse = ref(null)
@@ -22,13 +25,19 @@ const showModal = ref(false)
 
 const isDark = ref(false)
 
-// ✅ ROUTE (query ?book=)
+// ✅ ROUTE (query ?book= ?videos=)
 const route = useRoute()
 const router = useRouter()
 
 const setBookFromQuery = (q) => {
   const n = Number(q)
   selectedBookBf.value = Number.isFinite(n) && n > 0 ? n : null
+}
+
+// ✅ NEW: init mode فيديو from URL query
+const setVideoFromQuery = (q) => {
+  const v = String(q || '').trim()
+  showVideoOnly.value = v === '1' || v.toLowerCase() === 'true'
 }
 
 // ✅ MENU الكتب (MOBILE DRAWER) + SWIPE
@@ -47,6 +56,8 @@ const openBooksMenu = async () => {
   if (drawerEl.value) {
     drawerWidth.value = drawerEl.value.getBoundingClientRect().width || 360
   }
+  await nextTick()
+  updateDrawerScrollHint()
 }
 
 const closeBooksMenu = () => {
@@ -108,12 +119,36 @@ const prevPage = () => {
   }
 }
 
+// ✅ Actions menu
+const goAllHadiths = async () => {
+  showVideoOnly.value = false
+  searchQuery.value = ''
+  selectedBookBf.value = null
+  page.value = 1
+  scrollToTop()
+  if (route.query.book != null || route.query.videos != null) {
+    await router.replace({ query: { ...route.query, book: undefined, videos: undefined } })
+  }
+}
+
+const goVideoHadiths = async () => {
+  showVideoOnly.value = true
+  searchQuery.value = ''
+  selectedBookBf.value = null
+  page.value = 1
+  scrollToTop()
+  if (route.query.book != null || route.query.videos !== '1') {
+    await router.replace({ query: { ...route.query, book: undefined, videos: '1' } })
+  }
+}
+
 // --- CHARGEMENT ---
 onMounted(async () => {
   window.addEventListener('scroll', handleScroll)
 
-  // ✅ init book from URL query
+  // ✅ init from URL query
   setBookFromQuery(route.query.book)
+  setVideoFromQuery(route.query.videos)
 
   try {
     const savedTheme = localStorage.getItem('theme')
@@ -150,6 +185,9 @@ onMounted(async () => {
     })
 
     loading.value = false
+
+    await nextTick()
+    updateAsideScrollHint()
   } catch (e) {
     console.error(e)
     alert('Erreur technique : ' + (e?.message || e))
@@ -166,6 +204,14 @@ watch(
   () => route.query.book,
   (v) => {
     setBookFromQuery(v)
+  }
+)
+
+// ✅ sync route.query.videos -> showVideoOnly
+watch(
+  () => route.query.videos,
+  (v) => {
+    setVideoFromQuery(v)
   }
 )
 
@@ -293,23 +339,41 @@ const books = computed(() => {
     .map((b) => ({ ...b, numLabel: `${b.bf}.` }))
 })
 
+// ✅ NEW: compteur vidéos
+const videoCount = computed(() => hadiths.value.filter((h) => !!h.has_video).length)
+
+// ✅ NEW: compteur vidéos حسب الكتاب الحالي (si book sélectionné)
+const videoCountInCurrent = computed(() => {
+  if (selectedBookBf.value != null) {
+    return hadiths.value.filter(
+      (h) => Number(h.bf ?? h.b) === Number(selectedBookBf.value) && !!h.has_video
+    ).length
+  }
+  return videoCount.value
+})
+
 const isUidLike = (v) => /^\d+-\d+$/.test(String(v || '').trim())
 
 const filteredList = computed(() => {
   const q = String(searchQuery.value || '').trim()
+  let list = hadiths.value
 
   if (q) {
-    if (isUidLike(q)) return hadiths.value.filter((h) => String(h.uid) === q)
-    if (!isNaN(q)) return hadiths.value.filter((h) => h.id == q)
-
-    return fuse.value ? fuse.value.search(normalizeSearchQuery(q)).map((r) => r.item) : []
+    if (isUidLike(q)) list = hadiths.value.filter((h) => String(h.uid) === q)
+    else if (!isNaN(q)) list = hadiths.value.filter((h) => h.id == q)
+    else list = fuse.value ? fuse.value.search(normalizeSearchQuery(q)).map((r) => r.item) : []
+  } else if (selectedBookBf.value != null) {
+    list = hadiths.value.filter((h) => Number(h.bf ?? h.b) === Number(selectedBookBf.value))
+  } else {
+    list = hadiths.value
   }
 
-  if (selectedBookBf.value != null) {
-    return hadiths.value.filter((h) => Number(h.bf ?? h.b) === Number(selectedBookBf.value))
+  // ✅ appliquer filtre vidéo à la fin
+  if (showVideoOnly.value) {
+    list = list.filter((h) => !!h.has_video)
   }
 
-  return hadiths.value
+  return list
 })
 
 const paginatedList = computed(() => {
@@ -320,16 +384,29 @@ const paginatedList = computed(() => {
 const totalPages = computed(() => Math.ceil(filteredList.value.length / itemsPerPage))
 
 // ✅ keep URL in sync when selecting a book (and reset page)
-watch([searchQuery, selectedBookBf], async () => {
+watch([searchQuery, selectedBookBf, showVideoOnly], async () => {
   page.value = 1
   scrollToTop()
 
-  // si user tape une recherche => on enlève ?book=
+  // si user tape une recherche => on enlève ?book= et ?videos=
   if (String(searchQuery.value || '').trim()) {
-    if (route.query.book != null) {
-      await router.replace({ query: { ...route.query, book: undefined } })
+    if (route.query.book != null || route.query.videos != null) {
+      await router.replace({ query: { ...route.query, book: undefined, videos: undefined } })
     }
     return
+  }
+
+  // si mode فيديو => on met ?videos=1 et on enlève ?book=
+  if (showVideoOnly.value) {
+    if (route.query.videos !== '1' || route.query.book != null) {
+      await router.replace({ query: { ...route.query, videos: '1', book: undefined } })
+    }
+    return
+  } else {
+    // si خرجنا من mode فيديو => ننحي videos
+    if (route.query.videos != null) {
+      await router.replace({ query: { ...route.query, videos: undefined } })
+    }
   }
 
   // si book sélectionné => on met ?book=
@@ -607,6 +684,38 @@ const exportHadithImage = async () => {
     shareBusy.value = false
   }
 }
+
+// ✅ scroll hint (drawer + aside)
+const drawerScrollEl = ref(null)
+const asideScrollEl = ref(null)
+const showDrawerScrollHint = ref(false)
+const showAsideScrollHint = ref(false)
+
+const updateScrollHint = (el, outRef) => {
+  if (!el) {
+    outRef.value = false
+    return
+  }
+  const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
+  outRef.value = remaining > 10
+}
+
+const updateDrawerScrollHint = () => updateScrollHint(drawerScrollEl.value, showDrawerScrollHint)
+const updateAsideScrollHint = () => updateScrollHint(asideScrollEl.value, showAsideScrollHint)
+
+const scrollDrawerDown = () => {
+  const el = drawerScrollEl.value
+  if (!el) return
+  el.scrollBy({ top: 280, behavior: 'smooth' })
+  setTimeout(updateDrawerScrollHint, 250)
+}
+
+const scrollAsideDown = () => {
+  const el = asideScrollEl.value
+  if (!el) return
+  el.scrollBy({ top: 280, behavior: 'smooth' })
+  setTimeout(updateAsideScrollHint, 250)
+}
 </script>
 
 <template>
@@ -623,11 +732,7 @@ const exportHadithImage = async () => {
             class="w-8 h-8 flex items-center justify-center bg-slate-100 dark:bg-slate-800 hover:bg-emerald-100 rounded-full transition text-slate-500 hover:text-emerald-600"
             >🏠</NuxtLink
           >
-          <NuxtLink
-            to="/bukhari"
-            class="flex items-center gap-3 cursor-pointer"
-            @click="searchQuery = ''"
-          >
+          <NuxtLink to="/bukhari" class="flex items-center gap-3 cursor-pointer" @click="searchQuery = ''">
             <img
               src="/logo.png"
               alt="Logo"
@@ -679,13 +784,17 @@ const exportHadithImage = async () => {
           </button>
         </div>
 
-        <div class="p-2 space-y-1 overflow-y-auto h-[calc(100%-4rem)] custom-scrollbar">
+        <div
+          ref="drawerScrollEl"
+          class="relative p-2 space-y-1 overflow-y-auto h-[calc(100%-4rem)] custom-scrollbar"
+          @scroll="updateDrawerScrollHint"
+        >
           <NuxtLink
             to="/bukhari"
-            @click="searchQuery = ''; closeBooksMenu()"
+            @click="goAllHadiths(); closeBooksMenu()"
             class="w-full text-right px-3 py-2.5 rounded-lg text-sm transition font-bold block"
             :class="
-              selectedBookBf === null && !searchQuery
+              selectedBookBf === null && !searchQuery && !showVideoOnly
                 ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
             "
@@ -694,22 +803,57 @@ const exportHadithImage = async () => {
           </NuxtLink>
 
           <NuxtLink
+            :to="{ path: '/bukhari', query: { videos: '1' } }"
+            @click="goVideoHadiths(); closeBooksMenu()"
+            class="w-full text-right px-3 py-2.5 rounded-lg text-sm transition font-bold flex justify-between items-center"
+            :class="
+              showVideoOnly
+                ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+            "
+          >
+            <span>🎥 أحاديث بالفيديو</span>
+            <span class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500">
+              {{ videoCountInCurrent }}
+            </span>
+          </NuxtLink>
+
+          <NuxtLink
             v-for="b in books"
             :key="b.bf"
             :to="`/bukhari?book=${b.bf}`"
-            @click="searchQuery = ''; closeBooksMenu()"
+            @click="searchQuery = ''; showVideoOnly=false; closeBooksMenu()"
             class="w-full text-right px-3 py-2.5 rounded-lg text-sm transition flex justify-between items-center group"
             :class="
-              selectedBookBf === b.bf
+              selectedBookBf === b.bf && !showVideoOnly
                 ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 font-bold'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
             "
           >
-            <span class="truncate">{{ b.numLabel }} {{ b.name }}</span>
+            <span class="truncate">
+              {{ b.numLabel }}
+              <span class="mx-1">📖</span>
+              {{ b.name }}
+            </span>
             <span class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500">
               {{ b.count }}
             </span>
           </NuxtLink>
+
+          <button
+            v-if="showDrawerScrollHint"
+            type="button"
+            @click.stop.prevent="scrollDrawerDown"
+            class="sticky bottom-3 w-full flex justify-center pointer-events-auto"
+            aria-label="المزيد من الكتب"
+          >
+            <span
+              class="w-10 h-10 rounded-full bg-white/90 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 shadow flex items-center justify-center text-slate-500 dark:text-slate-200 hover:scale-105 transition"
+              title="المزيد"
+            >
+              ⬇️
+            </span>
+          </button>
         </div>
       </div>
     </div>
@@ -724,19 +868,23 @@ const exportHadithImage = async () => {
 
       <div v-else class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         <aside
-          class="hidden lg:block lg:col-span-3 sticky top-24 bg-white dark:bg-[#131c31] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm max-h-[80vh] overflow-y-auto custom-scrollbar"
+          class="hidden lg:block lg:col-span-3 sticky top-24 bg-white dark:bg-[#131c31] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm max-h-[80vh] overflow-hidden"
         >
           <div class="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-[#131c31] sticky top-0 z-10">
             <h3 class="font-bold text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider">الكتب والأبواب</h3>
           </div>
 
-          <div class="p-2 space-y-1">
+          <div
+            ref="asideScrollEl"
+            class="relative p-2 space-y-1 overflow-y-auto custom-scrollbar max-h-[calc(80vh-3.75rem)]"
+            @scroll="updateAsideScrollHint"
+          >
             <NuxtLink
               to="/bukhari"
-              @click="searchQuery = ''"
+              @click="goAllHadiths()"
               class="w-full text-right px-3 py-2.5 rounded-lg text-sm transition font-bold block"
               :class="
-                selectedBookBf === null && !searchQuery
+                selectedBookBf === null && !searchQuery && !showVideoOnly
                   ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400'
                   : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
               "
@@ -745,22 +893,57 @@ const exportHadithImage = async () => {
             </NuxtLink>
 
             <NuxtLink
+              :to="{ path: '/bukhari', query: { videos: '1' } }"
+              @click="goVideoHadiths()"
+              class="w-full text-right px-3 py-2.5 rounded-lg text-sm transition font-bold flex justify-between items-center"
+              :class="
+                showVideoOnly
+                  ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+              "
+            >
+              <span>🎥 أحاديث بالفيديو</span>
+              <span class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500">
+                {{ videoCountInCurrent }}
+              </span>
+            </NuxtLink>
+
+            <NuxtLink
               v-for="b in books"
               :key="b.bf"
               :to="`/bukhari?book=${b.bf}`"
-              @click="searchQuery = ''"
+              @click="searchQuery = ''; showVideoOnly=false"
               class="w-full text-right px-3 py-2.5 rounded-lg text-sm transition flex justify-between items-center group"
               :class="
-                selectedBookBf === b.bf
+                selectedBookBf === b.bf && !showVideoOnly
                   ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 font-bold'
                   : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
               "
             >
-              <span class="truncate">{{ b.numLabel }} {{ b.name }}</span>
+              <span class="truncate">
+                {{ b.numLabel }}
+                <span class="mx-1">📖</span>
+                {{ b.name }}
+              </span>
               <span class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500">
                 {{ b.count }}
               </span>
             </NuxtLink>
+
+            <button
+              v-if="showAsideScrollHint"
+              type="button"
+              @click.stop.prevent="scrollAsideDown"
+              class="sticky bottom-3 w-full flex justify-center pointer-events-auto"
+              aria-label="المزيد من الكتب"
+            >
+              <span
+                class="w-10 h-10 rounded-full bg-white/90 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 shadow flex items-center justify-center text-slate-500 dark:text-slate-200 hover:scale-105 transition"
+                title="المزيد"
+              >
+                ⬇️
+              </span>
+            </button>
           </div>
         </aside>
 
@@ -776,7 +959,11 @@ const exportHadithImage = async () => {
                 class="w-full p-5 pl-12 bg-transparent rounded-2xl outline-none text-lg font-medium text-slate-800 dark:text-white"
               />
               <span class="absolute left-4 top-1/2 -translate-y-1/2 text-2xl opacity-30">🔍</span>
-              <button v-if="searchQuery" @click="searchQuery = ''" class="absolute left-12 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 p-1">
+              <button
+                v-if="searchQuery"
+                @click="searchQuery = ''"
+                class="absolute left-12 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 p-1"
+              >
                 ✕
               </button>
             </div>
@@ -944,9 +1131,7 @@ const exportHadithImage = async () => {
               </div>
             </div>
 
-            <div v-else class="py-16 text-center text-slate-400">
-              ⚠️ لم يتم العثور على الحديث.
-            </div>
+            <div v-else class="py-16 text-center text-slate-400">⚠️ لم يتم العثور على الحديث.</div>
           </div>
         </div>
       </div>
@@ -956,11 +1141,7 @@ const exportHadithImage = async () => {
         class="fixed opacity-0 pointer-events-none"
         :style="isIOS() ? { left: '0px', top: '0px', zIndex: -10 } : { left: '-99999px', top: '0px' }"
       >
-        <div
-          ref="shareCardRef"
-          class="relative overflow-hidden"
-          :style="{ width: '1080px', height: '1920px', direction: 'rtl' }"
-        >
+        <div ref="shareCardRef" class="relative overflow-hidden" :style="{ width: '1080px', height: '1920px', direction: 'rtl' }">
           <img :src="SHARE_BG_URL" class="absolute inset-0 w-full h-full object-cover" alt="" draggable="false" />
 
           <div class="relative z-[1] w-full h-full">
