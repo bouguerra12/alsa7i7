@@ -6,6 +6,35 @@ const route = useRoute()
 // slug peut être "22-17" (canonique) ou "1237" (ancien alias)
 const slug = String(route.params.id || '').trim()
 
+/* =========================
+   ✅ DARK MODE
+========================= */
+const isDark = ref(false)
+
+onMounted(() => {
+  try {
+    const savedTheme = localStorage.getItem('theme')
+    if (
+      savedTheme === 'dark' ||
+      (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    ) {
+      isDark.value = true
+      document.documentElement.classList.add('dark')
+    }
+  } catch (_) {}
+})
+
+const toggleTheme = () => {
+  isDark.value = !isDark.value
+  if (isDark.value) {
+    document.documentElement.classList.add('dark')
+    localStorage.setItem('theme', 'dark')
+  } else {
+    document.documentElement.classList.remove('dark')
+    localStorage.setItem('theme', 'light')
+  }
+}
+
 /**
  * ✅ Lecture SAFE des JSON depuis /public
  * - client : fetch HTTP normal
@@ -176,14 +205,17 @@ const renderHadith = (text) => {
     const sanad = text.substring(0, splitIdx)
     const matn = text.substring(splitIdx)
 
-    const formattedSanad = sanad.replace(regex, '<span class="text-emerald-600 font-bold">$1</span>')
+    const formattedSanad = sanad.replace(
+      regex,
+      '<span class="text-emerald-600 dark:text-emerald-400 font-bold">$1</span>'
+    )
 
     return `
-      <div class="text-sm leading-loose text-slate-500 mb-6 font-sanad text-justify pr-4">
+      <div class="text-sm leading-loose text-slate-500 dark:text-slate-400 mb-6 font-sanad text-justify pr-4">
         ${formattedSanad}
       </div>
-      <div class="bg-slate-50 p-6 rounded-2xl border border-slate-100 border-r-4 border-emerald-200 mt-2">
-        <p class="text-3xl font-serif leading-[2.8] text-slate-900 font-bold text-justify pr-4">
+      <div class="bg-slate-50 dark:bg-[#0B1120] p-6 rounded-2xl border border-slate-100 dark:border-slate-800 border-r-4 border-emerald-200 dark:border-r-emerald-400 mt-2">
+        <p class="text-3xl font-serif leading-[2.8] text-slate-900 dark:text-white font-bold text-justify pr-4">
           ${matn}
         </p>
       </div>
@@ -191,7 +223,7 @@ const renderHadith = (text) => {
   }
 
   return `
-    <p class="text-3xl font-serif leading-[2.8] text-slate-900 font-bold text-justify">
+    <p class="text-3xl font-serif leading-[2.8] text-slate-900 dark:text-white font-bold text-justify">
       ${text}
     </p>
   `
@@ -337,8 +369,6 @@ const shareHadith = async () => {
 
 /* =========================
    ✅ SHARE CARD (IMAGE EXPORT)
-   - Web/Android: html-to-image (toPng)
-   - iPhone/iPad: Canvas (sûr)
 ========================= */
 const shareCardRef = ref(null)
 const shareBusy = ref(false)
@@ -456,7 +486,6 @@ const exportHadithImageIOS = async () => {
   const m = meta.value
   if (!h || !m) return
 
-  // ✅ ouvrir tout de suite (Safari iOS bloque parfois window.open après async)
   const newTab = window.open('', '_blank')
 
   await ensureFontsReady()
@@ -485,14 +514,12 @@ const exportHadithImageIOS = async () => {
   ctx.textAlign = 'right'
   ctx.textBaseline = 'top'
 
-  // sanad
   ctx.fillStyle = 'rgba(0,0,0,.60)'
   ctx.font = `600 ${v.sanadSize}px "Noto Kufi Arabic","Tahoma","Arial",sans-serif`
   const sanadLines = v.sanad ? wrapLines(ctx, v.sanad, maxWidth) : []
   const sanadLineH = v.sanadSize * v.sanadLH
   const sanadH = sanadLines.length * sanadLineH
 
-  // matn
   ctx.fillStyle = '#000'
   ctx.font = `800 ${v.matnSize}px "Amiri","Noto Naskh Arabic","Tahoma","Arial",sans-serif`
   const matnLines = v.matn ? wrapLines(ctx, v.matn, maxWidth) : []
@@ -609,35 +636,41 @@ const exportHadithImage = async () => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-50 dir-rtl font-sans py-10 px-4 flex justify-center">
+  <div
+    class="min-h-screen bg-slate-50 dark:bg-[#0B1120] dir-rtl font-sans py-10 px-4 flex justify-center text-slate-800 dark:text-slate-100 transition-colors duration-300"
+  >
     <div
       v-if="hadith"
-      class="w-full max-w-4xl bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden"
+      class="w-full max-w-4xl bg-white dark:bg-[#131c31] rounded-3xl shadow-xl border border-slate-100 dark:border-slate-800 overflow-hidden"
     >
       <!-- HEADER -->
-      <div class="bg-slate-50 px-6 py-4 border-b flex justify-between items-center sticky top-0 z-10">
+      <div
+        class="bg-slate-50 dark:bg-[#0f172a] px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center sticky top-0 z-10"
+      >
         <NuxtLink
           to="/bukhari"
-          class="flex items-center gap-2 text-slate-500 hover:text-emerald-600 font-bold transition"
+          class="flex items-center gap-2 text-slate-500 dark:text-slate-300 hover:text-emerald-600 font-bold transition"
         >
           ➡ العودة للفهرس
         </NuxtLink>
 
         <!-- Right side -->
         <div class="flex items-center gap-2 flex-wrap justify-end">
-          <h1 class="font-bold text-lg text-emerald-800">
+          <h1 class="font-bold text-lg text-emerald-800 dark:text-emerald-300">
             صحيح البخاري
-            <span class="bg-emerald-100 px-2 py-0.5 rounded text-sm ml-2">
+            <span class="bg-emerald-100 dark:bg-emerald-900/30 px-2 py-0.5 rounded text-sm ml-2">
               #{{ meta?.sr || meta?.id || meta?.uid || slug }}
             </span>
           </h1>
 
-          <!-- ✅ Bouton livre (font-sanad مثل صلى الله عليه وسلم يقول) -->
+          
+
+          <!-- ✅ Bouton livre -->
           <NuxtLink
             v-if="meta?.bf"
             :to="bookLink"
-            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white
-                   text-emerald-800 hover:text-emerald-900 hover:border-emerald-300 transition
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/30
+                   text-emerald-800 dark:text-emerald-200 hover:text-emerald-900 hover:border-emerald-300 transition
                    text-sm font-sanad"
             :title="`عرض أحاديث ${bookNameAr}`"
           >
@@ -650,8 +683,8 @@ const exportHadithImage = async () => {
             type="button"
             @click="shareHadith"
             :disabled="shareBusy2"
-            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white
-                   text-slate-700 hover:text-emerald-700 hover:border-emerald-200 transition text-sm font-sanad
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/30
+                   text-slate-700 dark:text-slate-200 hover:text-emerald-700 hover:border-emerald-200 transition text-sm font-sanad
                    disabled:opacity-50"
             title="مشاركة الحديث"
           >
@@ -663,8 +696,8 @@ const exportHadithImage = async () => {
           <button
             type="button"
             @click="copyHadith"
-            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white
-                   text-slate-700 hover:text-emerald-700 hover:border-emerald-200 transition text-sm font-sanad"
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/30
+                   text-slate-700 dark:text-slate-200 hover:text-emerald-700 hover:border-emerald-200 transition text-sm font-sanad"
             :title="copied ? 'تم النسخ' : 'نسخ الحديث'"
           >
             <span>📋</span>
@@ -676,13 +709,23 @@ const exportHadithImage = async () => {
             type="button"
             @click="exportHadithImage"
             :disabled="shareBusy"
-            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white
-                   text-slate-700 hover:text-emerald-700 hover:border-emerald-200 transition text-sm font-sanad
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/30
+                   text-slate-700 dark:text-slate-200 hover:text-emerald-700 hover:border-emerald-200 transition text-sm font-sanad
                    disabled:opacity-50"
             title="📷 التقاط صورة"
           >
             <span>📷</span>
             <span>{{ shareBusy ? '...' : 'التقاط صورة' }}</span>
+          </button>
+
+          <!-- ✅ Dark mode -->
+          <button
+            type="button"
+            @click="toggleTheme"
+            class="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-yellow-400 flex items-center justify-center hover:scale-110 transition border border-slate-200 dark:border-slate-700"
+            title="الوضع الليلي"
+          >
+            <span v-if="isDark">☀️</span><span v-else>🌙</span>
           </button>
         </div>
       </div>
@@ -692,7 +735,7 @@ const exportHadithImage = async () => {
         <div class="px-2">
           <h2
             v-if="titleFromMatnArNoTashkil"
-            class="mx-auto max-w-2xl text-center font-serif text-base md:text-lg font-semibold text-slate-700 leading-relaxed"
+            class="mx-auto max-w-2xl text-center font-serif text-base md:text-lg font-semibold text-slate-700 dark:text-slate-200 leading-relaxed"
           >
             {{ titleFromMatnArNoTashkil }}
           </h2>
@@ -708,7 +751,7 @@ const exportHadithImage = async () => {
 
         <div
           v-if="hadith.youtube_id"
-          class="mx-auto rounded-2xl overflow-hidden shadow-lg bg-black"
+          class="mx-auto rounded-2xl overflow-hidden shadow-lg bg-black border border-slate-200 dark:border-slate-700"
           :class="hadith.is_short ? 'max-w-sm aspect-[9/16]' : 'w-full aspect-video'"
         >
           <iframe
@@ -719,8 +762,11 @@ const exportHadithImage = async () => {
           />
         </div>
 
-        <div v-if="hadith.audio_url" class="bg-white p-4 rounded-xl border flex items-center gap-4 shadow-sm">
-          <span class="text-2xl text-emerald-600">🔊</span>
+        <div
+          v-if="hadith.audio_url"
+          class="bg-white dark:bg-[#0f172a] p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center gap-4 shadow-sm"
+        >
+          <span class="text-2xl text-emerald-600 dark:text-emerald-400">🔊</span>
           <audio controls :src="hadith.audio_url" class="w-full h-8" />
         </div>
 
@@ -728,16 +774,21 @@ const exportHadithImage = async () => {
 
         <div
           v-if="hadith.english_text"
-          class="bg-slate-50 p-6 rounded-2xl text-left border border-slate-100 text-slate-600 text-sm"
+          class="bg-slate-50 dark:bg-[#0f172a] p-6 rounded-2xl text-left border border-slate-100 dark:border-slate-800 text-slate-600 dark:text-slate-300 text-sm"
           dir="ltr"
         >
-          <strong class="block text-emerald-600 text-xs uppercase mb-2"> English Translation </strong>
+          <strong class="block text-emerald-600 dark:text-emerald-400 text-xs uppercase mb-2">
+            English Translation
+          </strong>
           {{ hadith.english_text }}
         </div>
 
-        <div v-if="hadith.explication" class="bg-emerald-50/50 p-8 rounded-3xl border border-emerald-100">
-          <h3 class="font-bold text-emerald-800 mb-4 text-xl">💡 شرح فتح الباري</h3>
-          <p class="text-lg leading-loose text-justify text-slate-700 font-serif">
+        <div
+          v-if="hadith.explication"
+          class="bg-emerald-50/50 dark:bg-emerald-900/10 p-8 rounded-3xl border border-emerald-100 dark:border-emerald-900/30"
+        >
+          <h3 class="font-bold text-emerald-800 dark:text-emerald-300 mb-4 text-xl">💡 شرح فتح الباري</h3>
+          <p class="text-lg leading-loose text-justify text-slate-700 dark:text-slate-200 font-serif">
             {{ hadith.explication }}
           </p>
         </div>
@@ -747,7 +798,7 @@ const exportHadithImage = async () => {
     <!-- ERREUR -->
     <div v-else-if="error" class="text-center py-40">
       <div class="text-4xl mb-4">⚠️</div>
-      <p class="text-xl text-slate-500 mb-6">عذراً، الحديث ({{ slug }}) غير متوفر.</p>
+      <p class="text-xl text-slate-500 dark:text-slate-300 mb-6">عذراً، الحديث ({{ slug }}) غير متوفر.</p>
       <NuxtLink to="/bukhari" class="text-emerald-600 underline mt-4 block">العودة للرئيسية</NuxtLink>
     </div>
 
