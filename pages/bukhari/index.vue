@@ -727,20 +727,18 @@ const scrollAsideDown = () => {
     >
       <div class="container mx-auto px-4 h-full flex items-center justify-between">
         <div class="flex items-center gap-4">
-          <NuxtLink
-            to="/"
-            class="w-8 h-8 flex items-center justify-center bg-slate-100 dark:bg-slate-800 hover:bg-emerald-100 rounded-full transition text-slate-500 hover:text-emerald-600"
-            >🏠</NuxtLink
-          >
-          <NuxtLink to="/bukhari" class="flex items-center gap-3 cursor-pointer" @click="searchQuery = ''">
+         
+          <NuxtLink to="/" class="flex items-center gap-3 cursor-pointer" @click="searchQuery = ''">
+
             <img
               src="/logo.png"
               alt="Logo"
               class="w-9 h-9 rounded-full object-cover border border-slate-200 dark:border-slate-700"
               onerror="this.style.display='none'"
             />
-            <h1 class="font-serif text-2xl font-bold tracking-wide text-slate-800 dark:text-white">صحيح البخاري</h1>
+            
           </NuxtLink>
+          <h1 class="font-serif text-2xl font-bold tracking-wide text-slate-800 dark:text-white">صحيح البخاري</h1>
         </div>
 
         <div class="flex items-center gap-2">
