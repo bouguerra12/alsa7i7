@@ -19,7 +19,7 @@ const itemsPerPage = 15
 const fuse = ref(null)
 
 const selectedHadith = ref(null)
-const selectedHadithMeta = ref(null) // ✅ meta (uid/bf/bi/sr...)
+const selectedHadithMeta = ref(null) // meta (uid/bf/bi/sr...)
 const isDetailsLoading = ref(false)
 const showModal = ref(false)
 
@@ -34,7 +34,6 @@ const setBookFromQuery = (q) => {
   selectedBookBf.value = Number.isFinite(n) && n > 0 ? n : null
 }
 
-// ✅ NEW: init mode فيديو from URL query
 const setVideoFromQuery = (q) => {
   const v = String(q || '').trim()
   showVideoOnly.value = v === '1' || v.toLowerCase() === 'true'
@@ -76,7 +75,7 @@ const onDrawerTouchStart = (e) => {
 const onDrawerTouchMove = (e) => {
   if (!isSwipingDrawer.value || !e.touches?.length) return
   drawerCurrentX.value = e.touches[0].clientX
-  const delta = drawerCurrentX.value - drawerStartX.value // >0 vers la droite
+  const delta = drawerCurrentX.value - drawerStartX.value
   drawerTranslateX.value = Math.max(0, Math.min(delta, drawerWidth.value))
 }
 
@@ -94,15 +93,18 @@ watch(showBooksMenu, (v) => {
   if (process.client) document.body.style.overflow = v ? 'hidden' : ''
 })
 
-// ✅ SCROLL TOP
+// ✅ SCROLL TOP + UI scroll
 const showScrollTop = ref(false)
+const scrolledDown = ref(false)
 
 const scrollToTop = () => {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 const handleScroll = () => {
-  showScrollTop.value = window.scrollY > 400
+  const y = window.scrollY || 0
+  showScrollTop.value = y > 400
+  scrolledDown.value = y > 50
 }
 
 const nextPage = () => {
@@ -142,131 +144,130 @@ const goVideoHadiths = async () => {
   }
 }
 
-// --- CHARGEMENT ---
-onMounted(async () => {
-  window.addEventListener('scroll', handleScroll)
+// --- NORMALISATION RECHERCHE ---
+const normalizeSearchQuery = (text) =>
+  text
+    ? String(text)
+        .replace(/[\u064B-\u065F\u0670]/g, '')
+        .replace(/[أإآ]/g, 'ا')
+        .replace(/ة/g, 'ه')
+        .replace(/ى/g, 'ي')
+        .replace(/[^\S\r\n]+/g, ' ')
+        .trim()
+    : ''
 
-  // ✅ init from URL query
-  setBookFromQuery(route.query.book)
-  setVideoFromQuery(route.query.videos)
+const isUidLike = (v) => /^\d+-\d+$/.test(String(v || '').trim())
 
-  try {
-    const savedTheme = localStorage.getItem('theme')
-    if (
-      savedTheme === 'dark' ||
-      (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)
-    ) {
-      isDark.value = true
-      document.documentElement.classList.add('dark')
-    }
+// --- HIGHLIGHT (vert theme) ---
+const escapeHtml = (s) =>
+  String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
 
-    const res = await fetch('/data/bukhari/index_min.json')
-    if (!res.ok) throw new Error(`Erreur ${res.status}: /data/bukhari/index_min.json`)
+const getQueryTokens = (q) => {
+  const nq = normalizeSearchQuery(q)
+  if (!nq) return []
+  return nq
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2)
+    .slice(0, 14)
+}
 
-    const rawData = await res.json()
+const tokenToArabicLooseRegex = (token) => {
+  const harakat = '[\\u064B-\\u065F\\u0670]*'
+  const esc = (c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-    // ✅ ordre stable : bf puis bi
-    hadiths.value = Array.isArray(rawData)
-      ? rawData.slice().sort((a, b) => {
-          const abf = Number(a?.bf ?? a?.b ?? 0)
-          const bbf = Number(b?.bf ?? b?.b ?? 0)
-          if (abf !== bbf) return abf - bbf
-          const abi = Number(a?.bi ?? 0)
-          const bbi = Number(b?.bi ?? 0)
-          return abi - bbi
-        })
-      : []
-
-    fuse.value = new Fuse(hadiths.value, {
-      keys: ['s', 'c', 'id', 'uid', 'sr'],
-      threshold: 0.2,
-      ignoreLocation: true,
-      useExtendedSearch: true
-    })
-
-    loading.value = false
-
-    await nextTick()
-    updateAsideScrollHint()
-  } catch (e) {
-    console.error(e)
-    alert('Erreur technique : ' + (e?.message || e))
-  }
-})
-
-onUnmounted(() => {
-  window.removeEventListener('scroll', handleScroll)
-  if (process.client) document.body.style.overflow = ''
-})
-
-// ✅ sync route.query.book -> selectedBookBf
-watch(
-  () => route.query.book,
-  (v) => {
-    setBookFromQuery(v)
-  }
-)
-
-// ✅ sync route.query.videos -> showVideoOnly
-watch(
-  () => route.query.videos,
-  (v) => {
-    setVideoFromQuery(v)
-  }
-)
-
-// --- DÉTAIL (FIX MODAL) ---
-const openDetails = async (item, evt) => {
-  if (evt?.stopPropagation) evt.stopPropagation()
-  if (evt?.preventDefault) evt.preventDefault()
-
-  // ✅ ouvrir modal immédiatement
-  showModal.value = true
-  selectedHadith.value = null
-  selectedHadithMeta.value = item
-  isDetailsLoading.value = true
-
-  // ✅ laisser le DOM afficher modal + loader
-  await nextTick()
-
-  // ✅ ne PAS muter item
-  const bf = Number(item?.bf ?? item?.b ?? NaN)
-  const bi = Number.isInteger(item?.bi) ? item.bi : null
-
-  if (!Number.isFinite(bf) || bf <= 0) {
-    console.error('Missing/invalid bf in index item:', item)
-    isDetailsLoading.value = false
-    return
+  const mapChar = (ch) => {
+    if (ch === 'ا') return '(?:ا|أ|إ|آ)'
+    if (ch === 'ه') return '(?:ه|ة)'
+    if (ch === 'ي') return '(?:ي|ى)'
+    return esc(ch)
   }
 
-  try {
-    const bookRes = await fetch(`/data/bukhari/books/${bf}.json`)
-    if (!bookRes.ok) throw new Error(`Book ${bf} fetch failed: ${bookRes.status}`)
-    const bookData = await bookRes.json()
+  const parts = Array.from(token).map((ch) => `${mapChar(ch)}${harakat}`)
+  return new RegExp(parts.join(''), 'giu')
+}
 
-    selectedHadith.value =
-      Number.isInteger(bi) ? bookData[bi] : bookData.find((h) => h.id === item.id) || null
-  } catch (e) {
-    console.error(e)
-    selectedHadith.value = null
-  } finally {
-    isDetailsLoading.value = false
+const highlightTextArabic = (rawText, q) => {
+  const text = String(rawText ?? '')
+  const tokens = getQueryTokens(q)
+  if (!text || !tokens.length) return escapeHtml(text)
+
+  let out = escapeHtml(text)
+  for (const tok of tokens) {
+    const re = tokenToArabicLooseRegex(tok)
+    out = out.replace(re, (m) => `<mark class="hl">${escapeHtml(m)}</mark>`)
+  }
+  return out
+}
+
+const isTextQuery = (q) => {
+  const s = String(q || '').trim()
+  if (!s) return false
+  if (isUidLike(s)) return false
+  if (!isNaN(s)) return false
+  return true
+}
+
+// --- FILTRAGE / MATCH robuste ---
+const buildIndexEntry = (h) => {
+  const textRaw = String(h?.s || h?.t || h?.text || '')
+  const catRaw = String(h?.c || '')
+  return {
+    ...h,
+    _normText: normalizeSearchQuery(textRaw),
+    _normCat: normalizeSearchQuery(catRaw)
   }
 }
 
-// --- AFFICHAGE (SANAD + MATN) ---
+const getTokensObj = (q) => {
+  const nq = normalizeSearchQuery(q)
+  if (!nq) return { nq: '', tokens: [] }
+  const tokens = nq
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2)
+    .slice(0, 14)
+  return { nq, tokens }
+}
+
+const matchText = (h, q) => {
+  const { nq, tokens } = getTokensObj(q)
+  if (!nq) return true
+  const hay = `${h?._normText || ''} ${h?._normCat || ''}`.trim()
+  if (!hay) return false
+
+  // phrase exacte (longue)
+  if (nq.length >= 10 && nq.includes(' ') && hay.includes(nq)) return true
+
+  // tous les tokens doivent exister (résultats fiables)
+  if (!tokens.length) return false
+  return tokens.every((t) => hay.includes(t))
+}
+
+// --- AFFICHAGE (SANAD + MATN) + HIGHLIGHT ---
 const renderHadith = (text) => {
   if (!text) return ''
+
+  const q = String(searchQuery.value || '').trim()
+  const doHL = isTextQuery(q)
 
   const regex =
     /((?:صَلَّى.*?وَسَلَّمَ|صلى الله عليه وسلم)(?:\s+(?:يَقُولُ|قَالَ|يُحَدِّثُ|خَطَبَ|يقول|قال|يحدث))?)/
 
-  const match = text.match(regex)
+  const match = String(text).match(regex)
 
   if (match && match.index > 0) {
     const splitIdx = match.index + match[0].length
-    const sanad = text.substring(0, splitIdx)
-    const matn = text.substring(splitIdx)
+    const sanadRaw = String(text).substring(0, splitIdx)
+    const matnRaw = String(text).substring(splitIdx)
+
+    const sanad = doHL ? highlightTextArabic(sanadRaw, q) : escapeHtml(sanadRaw)
+    const matn = doHL ? highlightTextArabic(matnRaw, q) : escapeHtml(matnRaw)
 
     const formattedSanad = sanad.replace(
       regex,
@@ -285,24 +286,16 @@ const renderHadith = (text) => {
     `
   }
 
+  const body = doHL ? highlightTextArabic(text, q) : escapeHtml(text)
+
   return `
     <div class="matn-box relative">
       <p class="text-2xl md:text-3xl font-serif leading-[2.4] md:leading-[2.8] lg:leading-[3.0] text-slate-900 dark:text-white font-bold text-justify">
-        ${text}
+        ${body}
       </p>
     </div>
   `
 }
-
-const normalizeSearchQuery = (text) =>
-  text
-    ? text
-        .replace(/[\u064B-\u065F\u0670]/g, '')
-        .replace(/[أإآ]/g, 'ا')
-        .replace(/ة/g, 'ه')
-        .replace(/ى/g, 'ي')
-        .trim()
-    : ''
 
 const toggleTheme = () => {
   isDark.value = !isDark.value
@@ -339,10 +332,8 @@ const books = computed(() => {
     .map((b) => ({ ...b, numLabel: `${b.bf}.` }))
 })
 
-// ✅ NEW: compteur vidéos
+// ✅ compteur vidéos
 const videoCount = computed(() => hadiths.value.filter((h) => !!h.has_video).length)
-
-// ✅ NEW: compteur vidéos حسب الكتاب الحالي (si book sélectionné)
 const videoCountInCurrent = computed(() => {
   if (selectedBookBf.value != null) {
     return hadiths.value.filter(
@@ -352,27 +343,56 @@ const videoCountInCurrent = computed(() => {
   return videoCount.value
 })
 
-const isUidLike = (v) => /^\d+-\d+$/.test(String(v || '').trim())
+// ✅ badge داخل شريط البحث (يسار)
+const searchBadge = computed(() => {
+  const q = String(searchQuery.value || '').trim()
+  if (!q) return ''
+  if (isUidLike(q)) return `UID: ${q}`
+  if (!isNaN(q)) return `#${q}`
+  return `نتائج: ${filteredList.value.length}`
+})
 
+// --- FILTRAGE ---
 const filteredList = computed(() => {
   const q = String(searchQuery.value || '').trim()
   let list = hadiths.value
 
   if (q) {
-    if (isUidLike(q)) list = hadiths.value.filter((h) => String(h.uid) === q)
-    else if (!isNaN(q)) list = hadiths.value.filter((h) => h.id == q)
-    else list = fuse.value ? fuse.value.search(normalizeSearchQuery(q)).map((r) => r.item) : []
+    if (isUidLike(q)) {
+      list = hadiths.value.filter((h) => String(h.uid) === q)
+    } else if (!isNaN(q)) {
+      const qq = String(q).trim()
+      list = hadiths.value.filter((h) => String(h.id) === qq || String(h.sr) === qq)
+    } else {
+      // ✅ match strict (tokens)
+      list = hadiths.value.filter((h) => matchText(h, q))
+
+      // ✅ si peu de résultats, fallback Fuse (mais on garde fiable)
+      if (!list.length && fuse.value) {
+        const nq = normalizeSearchQuery(q)
+        list = fuse.value.search(nq).map((r) => r.item)
+      }
+
+      // ✅ ranking simple
+      const nq = normalizeSearchQuery(q)
+      if (nq) {
+        list = list
+          .map((h) => {
+            const hay = `${h._normText || ''} ${h._normCat || ''}`.trim()
+            const phraseHit = nq.length >= 10 && nq.includes(' ') && hay.includes(nq)
+            const tokens = getQueryTokens(q)
+            const tokenHits = tokens.reduce((acc, t) => acc + (hay.includes(t) ? 1 : 0), 0)
+            return { h, score: (phraseHit ? 1000 : 0) + tokenHits * 10 }
+          })
+          .sort((a, b) => b.score - a.score)
+          .map((x) => x.h)
+      }
+    }
   } else if (selectedBookBf.value != null) {
     list = hadiths.value.filter((h) => Number(h.bf ?? h.b) === Number(selectedBookBf.value))
-  } else {
-    list = hadiths.value
   }
 
-  // ✅ appliquer filtre vidéo à la fin
-  if (showVideoOnly.value) {
-    list = list.filter((h) => !!h.has_video)
-  }
-
+  if (showVideoOnly.value) list = list.filter((h) => !!h.has_video)
   return list
 })
 
@@ -388,7 +408,6 @@ watch([searchQuery, selectedBookBf, showVideoOnly], async () => {
   page.value = 1
   scrollToTop()
 
-  // si user tape une recherche => on enlève ?book= et ?videos=
   if (String(searchQuery.value || '').trim()) {
     if (route.query.book != null || route.query.videos != null) {
       await router.replace({ query: { ...route.query, book: undefined, videos: undefined } })
@@ -396,39 +415,143 @@ watch([searchQuery, selectedBookBf, showVideoOnly], async () => {
     return
   }
 
-  // si mode فيديو => on met ?videos=1 et on enlève ?book=
   if (showVideoOnly.value) {
     if (route.query.videos !== '1' || route.query.book != null) {
       await router.replace({ query: { ...route.query, videos: '1', book: undefined } })
     }
     return
   } else {
-    // si خرجنا من mode فيديو => ننحي videos
     if (route.query.videos != null) {
       await router.replace({ query: { ...route.query, videos: undefined } })
     }
   }
 
-  // si book sélectionné => on met ?book=
   if (selectedBookBf.value != null) {
     const next = String(selectedBookBf.value)
     if (String(route.query.book || '') !== next) {
       await router.replace({ query: { ...route.query, book: next } })
     }
   } else {
-    // aucun book => on enlève ?book=
     if (route.query.book != null) {
       await router.replace({ query: { ...route.query, book: undefined } })
     }
   }
 })
 
+// --- DÉTAIL (MODAL) ✅ (هذا اللي كان ناقص عندك/تخرب بسبب paste جزئي) ---
+const openDetails = async (item, evt) => {
+  if (evt?.stopPropagation) evt.stopPropagation()
+  if (evt?.preventDefault) evt.preventDefault()
+
+  showModal.value = true
+  selectedHadith.value = null
+  selectedHadithMeta.value = item
+  isDetailsLoading.value = true
+
+  await nextTick()
+
+  const bf = Number(item?.bf ?? item?.b ?? NaN)
+  const bi = Number.isInteger(item?.bi) ? item.bi : null
+
+  if (!Number.isFinite(bf) || bf <= 0) {
+    console.error('Missing/invalid bf in index item:', item)
+    isDetailsLoading.value = false
+    return
+  }
+
+  try {
+    const bookRes = await fetch(`/data/bukhari/books/${bf}.json`)
+    if (!bookRes.ok) throw new Error(`Book ${bf} fetch failed: ${bookRes.status}`)
+    const bookData = await bookRes.json()
+
+    selectedHadith.value =
+      Number.isInteger(bi) ? bookData[bi] : bookData.find((h) => h.id === item.id) || null
+  } catch (e) {
+    console.error(e)
+    selectedHadith.value = null
+  } finally {
+    isDetailsLoading.value = false
+  }
+}
+
+// --- CHARGEMENT ---
+onMounted(async () => {
+  window.addEventListener('scroll', handleScroll)
+
+  setBookFromQuery(route.query.book)
+  setVideoFromQuery(route.query.videos)
+
+  try {
+    const savedTheme = localStorage.getItem('theme')
+    if (
+      savedTheme === 'dark' ||
+      (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    ) {
+      isDark.value = true
+      document.documentElement.classList.add('dark')
+    }
+
+    const res = await fetch('/data/bukhari/index_min.json')
+    if (!res.ok) throw new Error(`Erreur ${res.status}: /data/bukhari/index_min.json`)
+
+    const rawData = await res.json()
+
+    hadiths.value = Array.isArray(rawData)
+      ? rawData
+          .slice()
+          .sort((a, b) => {
+            const abf = Number(a?.bf ?? a?.b ?? 0)
+            const bbf = Number(b?.bf ?? b?.b ?? 0)
+            if (abf !== bbf) return abf - bbf
+            const abi = Number(a?.bi ?? 0)
+            const bbi = Number(b?.bi ?? 0)
+            return abi - bbi
+          })
+          .map(buildIndexEntry)
+      : []
+
+    // ✅ Fuse (fallback)
+    fuse.value = new Fuse(hadiths.value, {
+      keys: [
+        { name: '_normText', weight: 0.85 },
+        { name: '_normCat', weight: 0.15 }
+      ],
+      threshold: 0.35,
+      ignoreLocation: true,
+      minMatchCharLength: 2
+    })
+
+    loading.value = false
+
+    await nextTick()
+    updateAsideScrollHint()
+    handleScroll()
+  } catch (e) {
+    console.error(e)
+    alert('Erreur technique : ' + (e?.message || e))
+  }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', handleScroll)
+  if (process.client) document.body.style.overflow = ''
+})
+
+// ✅ sync route.query.book -> selectedBookBf
+watch(
+  () => route.query.book,
+  (v) => setBookFromQuery(v)
+)
+watch(
+  () => route.query.videos,
+  (v) => setVideoFromQuery(v)
+)
+
 //✅ ====== SHARE CARD (IMAGE EXPORT) ======
 const shareCardRef = ref(null)
 const shareBusy = ref(false)
 const SHARE_BG_URL = '/share/bg1080x1920.png'
 
-// ✅ Share URL uses canonical uid
 const getHadithShareUrl = (uid) => `https://alsa7i7.com/bukhari/${uid}`
 
 const isIOS = () => {
@@ -502,7 +625,6 @@ const getShareLayout = (text) => {
   return { sanad, matn, padX, sanadSize, sanadLH, matnSize, matnLH, vAlign }
 }
 
-// ✅ helpers canvas iOS
 const loadImageBitmap = async (src) => {
   const res = await fetch(src, { cache: 'no-store' })
   const blob = await res.blob()
@@ -727,18 +849,17 @@ const scrollAsideDown = () => {
     >
       <div class="container mx-auto px-4 h-full flex items-center justify-between">
         <div class="flex items-center gap-4">
-         
           <NuxtLink to="/" class="flex items-center gap-3 cursor-pointer" @click="searchQuery = ''">
-
             <img
               src="/logo.png"
               alt="Logo"
               class="w-9 h-9 rounded-full object-cover border border-slate-200 dark:border-slate-700"
               onerror="this.style.display='none'"
             />
-            
           </NuxtLink>
-          <h1 class="font-serif text-2xl font-bold tracking-wide text-slate-800 dark:text-white">صحيح البخاري</h1>
+          <h1 class="font-serif text-2xl font-bold tracking-wide text-slate-800 dark:text-white">
+            صحيح البخاري
+          </h1>
         </div>
 
         <div class="flex items-center gap-2">
@@ -777,7 +898,10 @@ const scrollAsideDown = () => {
           class="h-16 px-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-[#131c31] sticky top-0 z-10"
         >
           <div class="font-bold text-slate-600 dark:text-slate-200">الكتب والأبواب</div>
-          <button class="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 text-slate-400" @click="closeBooksMenu">
+          <button
+            class="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 text-slate-400"
+            @click="closeBooksMenu"
+          >
             ✕
           </button>
         </div>
@@ -811,7 +935,9 @@ const scrollAsideDown = () => {
             "
           >
             <span>🎥 أحاديث بالفيديو</span>
-            <span class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500">
+            <span
+              class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500"
+            >
               {{ videoCountInCurrent }}
             </span>
           </NuxtLink>
@@ -833,7 +959,9 @@ const scrollAsideDown = () => {
               <span class="mx-1">📖</span>
               {{ b.name }}
             </span>
-            <span class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500">
+            <span
+              class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500"
+            >
               {{ b.count }}
             </span>
           </NuxtLink>
@@ -858,7 +986,9 @@ const scrollAsideDown = () => {
 
     <main class="container mx-auto px-4 pt-24 pb-20 max-w-7xl">
       <div v-if="loading" class="flex flex-col items-center justify-center h-[60vh] animate-pulse">
-        <div class="w-16 h-16 bg-emerald-100 dark:bg-emerald-900/30 rounded-full mb-4 flex items-center justify-center text-3xl">
+        <div
+          class="w-16 h-16 bg-emerald-100 dark:bg-emerald-900/30 rounded-full mb-4 flex items-center justify-center text-3xl"
+        >
           📚
         </div>
         <p>جاري تحميل المكتبة...</p>
@@ -868,8 +998,12 @@ const scrollAsideDown = () => {
         <aside
           class="hidden lg:block lg:col-span-3 sticky top-24 bg-white dark:bg-[#131c31] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm max-h-[80vh] overflow-hidden"
         >
-          <div class="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-[#131c31] sticky top-0 z-10">
-            <h3 class="font-bold text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider">الكتب والأبواب</h3>
+          <div
+            class="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-[#131c31] sticky top-0 z-10"
+          >
+            <h3 class="font-bold text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider">
+              الكتب والأبواب
+            </h3>
           </div>
 
           <div
@@ -901,7 +1035,9 @@ const scrollAsideDown = () => {
               "
             >
               <span>🎥 أحاديث بالفيديو</span>
-              <span class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500">
+              <span
+                class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500"
+              >
                 {{ videoCountInCurrent }}
               </span>
             </NuxtLink>
@@ -923,7 +1059,9 @@ const scrollAsideDown = () => {
                 <span class="mx-1">📖</span>
                 {{ b.name }}
               </span>
-              <span class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500">
+              <span
+                class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500"
+              >
                 {{ b.count }}
               </span>
             </NuxtLink>
@@ -946,25 +1084,57 @@ const scrollAsideDown = () => {
         </aside>
 
         <section class="lg:col-span-9">
+          <!-- ✅ Search bar: مثال يختفي بعد scroll + badge نتائج داخل الشريط (يسار) -->
           <div class="sticky top-20 z-40 mb-8">
             <div
-              class="relative shadow-xl shadow-slate-200/50 dark:shadow-black/50 rounded-2xl bg-white/90 dark:bg-[#131c31]/90 backdrop-blur border border-slate-100 dark:border-slate-700 transition-all focus-within:ring-4 focus-within:ring-emerald-500/10"
+              class="relative rounded-2xl backdrop-blur border transition-all focus-within:ring-4 focus-within:ring-emerald-500/10"
+              :class="[
+                scrolledDown
+                  ? 'bg-white/55 dark:bg-[#131c31]/55 border-slate-200/40 dark:border-slate-700/40 shadow-md'
+                  : 'bg-white/95 dark:bg-[#131c31]/95 border-slate-100 dark:border-slate-700 shadow-xl shadow-slate-200/50 dark:shadow-black/50'
+              ]"
             >
+              <span class="absolute right-4 top-1/2 -translate-y-1/2 text-2xl opacity-35 select-none"
+                >🔍</span
+              >
+
+              <span
+                v-if="searchBadge"
+                class="absolute left-4 top-1/2 -translate-y-1/2 text-xs font-bold px-3 py-1 rounded-full
+                       bg-emerald-50/90 dark:bg-emerald-900/25 text-emerald-700 dark:text-emerald-300
+                       border border-emerald-100/70 dark:border-emerald-900/40 select-none"
+              >
+                {{ searchBadge }}
+              </span>
+
               <input
                 v-model="searchQuery"
                 type="text"
-                placeholder="ابحث عن كلمة (مثال: النية، رمضان) أو رقم الحديث... أو UID مثل 24-5"
-                class="w-full p-5 pl-12 bg-transparent rounded-2xl outline-none text-lg font-medium text-slate-800 dark:text-white"
+                inputmode="search"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="ابحث… كلمة/جملة أو رقم الحديث أو UID مثل 24-5"
+                class="w-full p-5 pr-14 pl-36 bg-transparent rounded-2xl outline-none text-lg font-medium text-slate-800 dark:text-white"
               />
-              <span class="absolute left-4 top-1/2 -translate-y-1/2 text-2xl opacity-30">🔍</span>
+
               <button
                 v-if="searchQuery"
                 @click="searchQuery = ''"
-                class="absolute left-12 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 p-1"
+                class="absolute top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 p-2 rounded-full
+                       hover:bg-slate-50/60 dark:hover:bg-slate-800/60 transition"
+                aria-label="مسح البحث"
+                title="مسح"
+                :style="searchBadge ? { left: '140px' } : { left: '16px' }"
               >
                 ✕
               </button>
             </div>
+              <div class="mt-2 text-sm flex justify-end">
+                <span v-if="!scrolledDown" class="text-slate-500 dark:text-slate-400 opacity-80">
+                  مثال: النية • رمضان • الصبر
+                </span>
+              </div>
+
           </div>
 
           <div class="space-y-6">
@@ -975,9 +1145,13 @@ const scrollAsideDown = () => {
               @click="openDetails(h, $event)"
             >
               <div class="bg-white dark:bg-[#131c31] rounded-[1.8rem] p-6 sm:p-8">
-                <div class="flex justify-between items-start mb-6 border-b border-slate-50 dark:border-slate-800 pb-4">
+                <div
+                  class="flex justify-between items-start mb-6 border-b border-slate-50 dark:border-slate-800 pb-4"
+                >
                   <div class="flex flex-wrap gap-2 items-center">
-                    <span class="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-bold px-3 py-1 rounded-lg font-mono">
+                    <span
+                      class="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-bold px-3 py-1 rounded-lg font-mono"
+                    >
                       #{{ h.sr || h.id || h.uid }}
                     </span>
 
@@ -1000,7 +1174,9 @@ const scrollAsideDown = () => {
 
                 <div v-html="renderHadith(h.t)"></div>
 
-                <div class="mt-6 pt-4 border-t border-slate-50 dark:border-slate-800 flex justify-end gap-3 items-center text-sm font-bold text-slate-400 group-hover:text-emerald-600 transition-colors">
+                <div
+                  class="mt-6 pt-4 border-t border-slate-50 dark:border-slate-800 flex justify-end gap-3 items-center text-sm font-bold text-slate-400 group-hover:text-emerald-600 transition-colors"
+                >
                   <span>شرح فتح الباري + ترجمة</span><span class="text-xl">💡</span>
                 </div>
               </div>
@@ -1016,7 +1192,9 @@ const scrollAsideDown = () => {
               <span>→</span>
             </button>
 
-            <div class="px-6 py-3 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm font-bold text-slate-600 dark:text-slate-300 font-mono">
+            <div
+              class="px-6 py-3 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm font-bold text-slate-600 dark:text-slate-300 font-mono"
+            >
               {{ page }} / {{ totalPages }}
             </div>
 
@@ -1041,13 +1219,19 @@ const scrollAsideDown = () => {
       </button>
 
       <!-- MODAL -->
-      <div v-if="showModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6" @click.self="showModal = false">
+      <div
+        v-if="showModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6"
+        @click.self="showModal = false"
+      >
         <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"></div>
 
         <div
           class="relative bg-white dark:bg-[#0f172a] w-full max-w-4xl max-h-[90vh] rounded-[2rem] shadow-2xl flex flex-col overflow-hidden animate-slide-up border border-slate-200 dark:border-slate-800"
         >
-          <div class="px-8 py-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-[#0f172a] sticky top-0 z-10">
+          <div
+            class="px-8 py-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-[#0f172a] sticky top-0 z-10"
+          >
             <div class="flex items-center gap-3">
               <h3 class="text-xl font-bold text-slate-800 dark:text-white">
                 حديث رقم {{ selectedHadithMeta?.sr || selectedHadithMeta?.id || selectedHadithMeta?.uid || '...' }}
@@ -1093,17 +1277,26 @@ const scrollAsideDown = () => {
                 class="mx-auto rounded-2xl overflow-hidden shadow-lg border border-slate-200 dark:border-slate-700 bg-black"
                 :class="selectedHadith.is_short ? 'max-w-[300px] aspect-[9/16]' : 'w-full aspect-video'"
               >
-                <iframe :src="`https://www.youtube.com/embed/${selectedHadith.youtube_id}`" class="w-full h-full" frameborder="0" allowfullscreen />
+                <iframe
+                  :src="`https://www.youtube.com/embed/${selectedHadith.youtube_id}`"
+                  class="w-full h-full"
+                  frameborder="0"
+                  allowfullscreen
+                />
               </div>
 
               <div
                 v-if="selectedHadith.audio_url"
                 class="bg-white dark:bg-[#131c31] p-4 rounded-xl border border-slate-100 dark:border-slate-700 flex items-center gap-4 shadow-sm"
               >
-                <div class="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 w-12 h-12 rounded-full flex items-center justify-center shrink-0 text-xl">
+                <div
+                  class="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 w-12 h-12 rounded-full flex items-center justify-center shrink-0 text-xl"
+                >
                   🔊
                 </div>
-                <audio controls class="w-full h-8"><source :src="selectedHadith.audio_url" type="audio/mpeg" /></audio>
+                <audio controls class="w-full h-8">
+                  <source :src="selectedHadith.audio_url" type="audio/mpeg" />
+                </audio>
               </div>
 
               <div v-html="renderHadith(selectedHadith.text_chakl)"></div>
@@ -1113,11 +1306,16 @@ const scrollAsideDown = () => {
                 class="bg-white dark:bg-[#131c31] p-6 rounded-2xl text-left border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 font-sans text-sm leading-relaxed shadow-sm"
                 dir="ltr"
               >
-                <strong class="block text-emerald-600 text-xs uppercase mb-2 tracking-wider">English Translation</strong>
+                <strong class="block text-emerald-600 text-xs uppercase mb-2 tracking-wider"
+                  >English Translation</strong
+                >
                 {{ selectedHadith.english_text }}
               </div>
 
-              <div v-if="selectedHadith.explication" class="relative bg-white dark:bg-[#131c31] p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+              <div
+                v-if="selectedHadith.explication"
+                class="relative bg-white dark:bg-[#131c31] p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm"
+              >
                 <div
                   class="absolute -top-4 right-8 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 px-4 py-1 rounded-full text-xs font-bold border border-amber-200 dark:border-amber-700/50 flex items-center gap-1"
                 >
@@ -1139,7 +1337,11 @@ const scrollAsideDown = () => {
         class="fixed opacity-0 pointer-events-none"
         :style="isIOS() ? { left: '0px', top: '0px', zIndex: -10 } : { left: '-99999px', top: '0px' }"
       >
-        <div ref="shareCardRef" class="relative overflow-hidden" :style="{ width: '1080px', height: '1920px', direction: 'rtl' }">
+        <div
+          ref="shareCardRef"
+          class="relative overflow-hidden"
+          :style="{ width: '1080px', height: '1920px', direction: 'rtl' }"
+        >
           <img :src="SHARE_BG_URL" class="absolute inset-0 w-full h-full object-cover" alt="" draggable="false" />
 
           <div class="relative z-[1] w-full h-full">
@@ -1217,19 +1419,45 @@ const scrollAsideDown = () => {
 </template>
 
 <style>
-.font-serif { font-family: 'Amiri', serif; }
-.font-sanad { font-family: 'Noto Kufi Arabic', sans-serif; }
-.dir-rtl { direction: rtl; }
-.custom-scrollbar::-webkit-scrollbar { width: 6px; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 10px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.dark .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #475569; }
-@keyframes slide-up { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-.animate-slide-up { animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+.font-serif {
+  font-family: 'Amiri', serif;
+}
+.font-sanad {
+  font-family: 'Noto Kufi Arabic', sans-serif;
+}
+.dir-rtl {
+  direction: rtl;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #475569;
+}
+@keyframes slide-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.animate-slide-up {
+  animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
 
 .matn-box {
   background: linear-gradient(to left, #ffffff 0%, #f8fafc 100%);
-  border-right: 5px solid #10B981;
+  border-right: 5px solid #10b981;
   padding: 1.5rem;
   border-radius: 1rem;
   margin-top: 1rem;
@@ -1237,7 +1465,20 @@ const scrollAsideDown = () => {
 }
 .dark .matn-box {
   background: linear-gradient(to left, #1e293b 0%, #0f172a 100%);
-  border-right-color: #34D399;
+  border-right-color: #34d399;
   box-shadow: none;
+}
+
+/* ✅ Highlight search (vert pour garder theme) */
+mark.hl {
+  padding: 0.05em 0.25em;
+  border-radius: 0.45em;
+  background: rgba(16, 185, 129, 0.22);
+  outline: 1px solid rgba(16, 185, 129, 0.25);
+  color: inherit;
+}
+.dark mark.hl {
+  background: rgba(16, 185, 129, 0.16);
+  outline-color: rgba(16, 185, 129, 0.18);
 }
 </style>
